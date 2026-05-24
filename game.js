@@ -766,7 +766,13 @@ function connectHubRoom() {
     renderLobby();
     return;
   }
-  hub.socket = new WebSocket(hub.session.wsUrl);
+  try {
+    hub.socket = new WebSocket(hub.session.wsUrl);
+  } catch {
+    hub.lastError = 'Could not open the room connection.';
+    renderLobby();
+    return;
+  }
   hub.socket.addEventListener('open', () => {
     hub.connected = true;
     hubSend(HUB_ROOM_EVENTS.JOIN_ROOM, {
@@ -777,7 +783,6 @@ function connectHubRoom() {
       player: { id: hub.session.playerId, name: hub.session.playerName },
     });
     hub.heartbeatTimer = setInterval(() => hubSend(HUB_ROOM_EVENTS.HEARTBEAT, { roomCode: hub.session.roomCode }), 15000);
-    sendPlayerMeta();
     renderLobby();
   });
   hub.socket.addEventListener('message', event => {
@@ -874,6 +879,10 @@ function handleHubMessage(type, payload) {
 function prepareRoomSetup() {
   els.setupScreen.classList.remove('hidden');
   els.gameScreen.classList.add('hidden');
+  document.body.classList.remove('tutorial-mode');
+  els.resultPanel?.classList.add('hidden');
+  els.finalResultScreen?.classList.add('hidden');
+  els.gameScreen?.classList.remove('final-view');
   els.roomButton?.classList.remove('hidden');
   els.playerName.disabled = true;
   els.cpuCount.disabled = true;
