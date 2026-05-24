@@ -116,40 +116,40 @@ const TUTORIAL_TEXTS = [
   'Role Board changes are allowed through Round 2. In Round 3, your board is locked.',
   'You may use one special action each round. Each special action can be used up to twice per game.',
   'Card Exchange lets you discard one card from your hand and draw the top card from the stock. It cannot be used when the stock is empty.',
-  'Use it now. Select your heart 6, then press Confirm.',
+  'Use it now. Select your ♥6, then press Confirm.',
   'You drew a new card. Your best hand with the market improved from Two Pair to Full House.',
   'Press Call. The required chips are taken from your stack and moved into the pot.',
   'CPU turns are scripted here: Mira calls, while Brakk presents Flush, uses Market Swap, and calls. Your best hand drops back to Two Pair.',
   'Round 2. A new market card appears. You can change your Role Board and use one special action again.',
-  'The club Ace is gone from the market. Check the opponents\' special action history.',
-  'Brakk used Market Swap, trading a hand card for the club Ace from the market.',
+  'The ♣A is gone from the market. Check the opponents\' special action history.',
+  'Brakk used Market Swap, trading a hand card for the ♣A from the market.',
   'Market Swap trades one hand card with one unlocked market card. The new market card becomes locked and cannot be swapped again, but it still counts as a normal market card.',
   'Brakk is presenting Flush. Is it true? Use Reveal Proof to get a clue.',
   'Reveal Proof selects an opponent and reveals one hand card from that opponent\'s current best hand to everyone.',
   'Use Reveal Proof on Brakk. Select Brakk in the dropdown, then press Confirm.',
-  'Brakk\'s club 8 is now public. It matches the club Ace he took, so a club Flush is a real threat.',
-  'But the diamond 10 is now in the market. With only the diamond Queen, you can make a diamond Royal Flush.',
-  'That diamond 10 is locked, so it is fixed from now on. Nobody can steal it with Market Swap.',
-  'If the diamond Jack gets taken, your Royal Flush path disappears. Hide your plan by changing your board to Four of a Kind.',
+  'Brakk\'s ♣8 is now public. It matches the ♣A he took, so a ♣ Flush is a real threat.',
+  'But the ♦10 is now in the market. With only the ♦Q, you can make a ♦ Royal Flush.',
+  'That ♦10 is locked, so it is fixed from now on. Nobody can steal it with Market Swap.',
+  'If the ♦J gets taken, your Royal Flush path disappears. Hide your plan by changing your board to Four of a Kind.',
   'Call to continue.',
   'CPU turns are scripted again. Mira presents Royal Flush and calls. Brakk raises, so the turn comes back to you.',
   'Raise doubles the current call target. When any player raises, players who already called must respond again with Call, Raise, or Fold.',
   'Each player can raise up to three times per game. Try raising now.',
   'Round 3 is the final round. Your Role Board is now locked.',
-  'Mira is presenting Royal Flush. It may be a bluff, but you should still chase the diamond Queen.',
+  'Mira is presenting Royal Flush. It may be a bluff, but you should still chase the ♦Q.',
   'Use Random Exchange.',
   'Random Exchange discards up to three random eligible hand cards and draws the same number from the stock. If the stock has fewer cards, it draws as many as possible.',
   'The first time you use Random Exchange, you also draw one extra die card from the stock. Die cards are public and cannot be discarded by Random Exchange.',
   'Exchange one random card. Select 1, then press Confirm.',
-  'You gained the diamond Queen as a die card. Together with the market, you now have a diamond Royal Flush. The die card is public, so opponents can see it.',
+  'You gained the ♦Q as a die card. Together with the market, you now have a ♦ Royal Flush. The die card is public, so opponents can see it.',
   'Call and pass the turn.',
   'After Round 3, each player chooses whether to Last Fold before Showdown. If time expires, players continue automatically. If everyone Last Folds, the pot carries into the next game.',
   'Last Fold refunds half your contributed chips if you are not first, but you cannot win the pot. Your hand is still revealed at Showdown.',
   'This time, continue. Click Continue.',
   'After Round 3 comes Showdown. Hands are revealed and points are calculated.',
   'Your best hand is a Royal Flush. It beats Four of a Kind, so you gain the Four of a Kind bonus.',
-  'Mira has only a club Queen High Card. Because her board claimed Royal Flush, she takes a large penalty.',
-  'Brakk makes a club Flush. His presented role is also Flush, so he gains the Flush bonus.',
+  'Mira has only a ♣Q High Card. Because her board claimed Royal Flush, she takes a large penalty.',
+  'Brakk makes a ♣ Flush. His presented role is also Flush, so he gains the Flush bonus.',
   'You earned the most points and win the whole pot.',
 ];
 
@@ -239,6 +239,7 @@ let audioContext = null;
 let coinSoundTemplate = null;
 let cardSoundTemplate = null;
 let tutorial = null;
+let tutorialCpuTimerDelay = 0;
 const handRevealCardIds = new Set();
 const peekFlipCardIds = new Set();
 const cpuNormalActionPulseIds = new Set();
@@ -642,7 +643,6 @@ function beginLastFold() {
     state.players[1].lastFoldChoice = 'lastFold';
     state.players[1].lastFolded = true;
     state.players[2].lastFoldChoice = 'continue';
-    els.lastFoldTimer.textContent = 'Paused';
     render();
     showTutorialStep(42);
     return;
@@ -785,6 +785,7 @@ function startShowdownAnimation(results) {
 
 async function playShowdownAnimation(token, results) {
   if (!await waitForShowdownStep(SHOWDOWN_INTERVAL, token)) return;
+  if (tutorial?.active && !await waitForTutorialShowdownPause(45, token)) return;
   for (const result of results) {
     if (!isCurrentShowdownAnimation(token)) return;
     showdownAnimation.revealedHandPlayerIds.add(result.player.id);
@@ -808,6 +809,11 @@ async function playShowdownAnimation(token, results) {
     if (!await waitForShowdownStep(SHOWDOWN_POINT_TIME + SHOWDOWN_INTERVAL, token)) return;
     showdownAnimation.activeClaimPlayerId = null;
     showdownAnimation.claimPointPlayerIds.clear();
+    if (tutorial?.active) {
+      const pauseIndexByPlayerId = { 0: 46, 1: 47, 2: 48 };
+      const pauseIndex = pauseIndexByPlayerId[result.player.id];
+      if (pauseIndex !== undefined && !await waitForTutorialShowdownPause(pauseIndex, token)) return;
+    }
   }
 
   const ranked = results.slice().sort(compareResults);
@@ -818,6 +824,7 @@ async function playShowdownAnimation(token, results) {
     render();
     if (!await waitForShowdownStep(SHOWDOWN_RANK_TIME + SHOWDOWN_FAST_INTERVAL, token)) return;
   }
+  if (tutorial?.active && !await waitForTutorialShowdownPause(49, token)) return;
   showdownAnimation.activeRankPlayerId = null;
 
   if (!await waitForShowdownStep(animateShowdownPayout(), token)) return;
@@ -825,6 +832,14 @@ async function playShowdownAnimation(token, results) {
   state.phase = 'result';
   showdownAnimation = null;
   render();
+}
+
+function waitForTutorialShowdownPause(index, token) {
+  if (!isCurrentShowdownAnimation(token)) return Promise.resolve(false);
+  showTutorialStep(index);
+  return new Promise(resolve => {
+    tutorial.pauseResolver = () => resolve(isCurrentShowdownAnimation(token));
+  });
 }
 
 function waitForShowdownStep(delay, token) {
@@ -1116,8 +1131,8 @@ function clearQueuedCardAnimations() {
 }
 
 function maybeCpuTurn() {
-  clearCpuTimers(false);
   if (tutorial?.active) return;
+  clearCpuTimers(false);
   if (!state || state.phase !== 'round') return;
   const player = state.players[state.currentPlayerIndex];
   if (!player || !player.isCpu) return;
@@ -1700,14 +1715,16 @@ function ensureTutorialUi() {
 }
 
 function tutorialStepConfig(index) {
+  if (index === 18 && tutorial?.cpuBusy) {
+    return { focus: null, allow: null, wait: true };
+  }
+
   const actionSteps = {
     3: { focus: '#rulesButton', allow: '#rulesButton', wait: true },
-    4: { focus: '#closeRules', allow: '#closeRules', wait: true },
     5: { focus: '#closeRules', allow: '#closeRules', wait: true },
     6: { focus: '.info-claim-trigger', allow: '.info-claim-trigger', wait: true },
     11: { focus: '[data-claim="fullHouse"]', allow: '[data-claim="fullHouse"]', wait: true },
-    15: { focus: '[data-special="exchange"]', allow: '[data-special="exchange"], [data-hand-index="2"], #confirmSpecial', wait: true },
-    16: { focus: '[data-hand-index="2"]', allow: '[data-hand-index="2"], #confirmSpecial', wait: true },
+    15: { focus: '[data-special="exchange"]', allow: '[data-special="exchange"]', wait: true },
     17: { focus: '#callButton', allow: '#callButton', wait: true },
     23: { focus: '[data-special="peek"]', allow: '[data-special="peek"]', wait: true },
     25: { focus: '#peekTarget', allow: '#peekTarget, #confirmSpecial', wait: true },
@@ -1720,19 +1737,23 @@ function tutorialStepConfig(index) {
     44: { focus: '#continueButton', allow: '#continueButton', wait: true },
   };
   const focusOnly = {
-    8: '[data-hand-index="0"], [data-hand-index="1"], #marketCards',
+    8: '[data-claim="twoPair"]',
     9: '[data-claim="fullHouse"]',
-    14: '[data-special="exchange"]',
+    14: '[data-special]',
     20: '#marketCards',
     21: '.info-top-right .action-icons',
     22: '[data-special="market"]',
     24: '[data-special="peek"]',
-    26: '.cards-top-right .field-cards',
-    27: '#marketCards, [data-hand-index="0"], [data-hand-index="3"]',
+    26: '[data-card-key="3-8"]',
+    27: '[data-card-key="2-10"], [data-card-key="2-11"], .cards-human [data-hand-index="0"], .cards-human [data-hand-index="3"]',
+    28: '[data-card-key="2-10"]',
     35: '[data-special="random"]',
-    45: '.cards-human, #marketCards, .info-human',
-    46: '.cards-top-left, #marketCards, .info-top-left',
-    47: '.cards-top-right, #marketCards, .info-top-right',
+    40: '[data-card-key="2-10"], [data-card-key="2-11"], [data-card-key="2-12"], .cards-human [data-hand-index="0"], .cards-human [data-hand-index="3"]',
+    45: null,
+    46: '[data-card-key="2-10"], [data-card-key="2-11"], [data-card-key="2-12"], .cards-human [data-hand-index="0"], .cards-human [data-hand-index="3"], .info-human',
+    47: '.cards-top-left, #marketCards, .info-top-left',
+    48: '.cards-top-right, #marketCards, .info-top-right',
+    49: '.showdown-rank',
   };
   return actionSteps[index] || { focus: focusOnly[index] || null, allow: null, wait: false };
 }
@@ -1742,7 +1763,7 @@ function showTutorialStep(index) {
   tutorial.index = index;
   ensureTutorialUi();
   const text = TUTORIAL_TEXTS[index] || 'Tutorial complete.';
-  document.getElementById('tutorialText').textContent = text;
+  document.getElementById('tutorialText').textContent = `(${index + 1}/${TUTORIAL_TEXTS.length}) ${text}`;
   const config = tutorialStepConfig(index);
   tutorial.focus = config.focus;
   tutorial.allow = config.allow;
@@ -1754,6 +1775,12 @@ function showTutorialStep(index) {
 
 function tutorialNext() {
   if (!tutorial?.active) return;
+  if (tutorial.pauseResolver) {
+    const resolve = tutorial.pauseResolver;
+    tutorial.pauseResolver = null;
+    resolve();
+    return;
+  }
   if (tutorial.index >= TUTORIAL_TEXTS.length - 1) {
     document.body.classList.remove('tutorial-mode');
     tutorial = null;
@@ -1855,8 +1882,7 @@ function tutorialAdvanceFrom(eventName, detail = {}) {
   else if ((i === 4 || i === 5) && eventName === 'rulesClose') showTutorialStep(6);
   else if (i === 6 && eventName === 'claimOpen') showTutorialStep(7);
   else if (i === 11 && eventName === 'claim:fullHouse') showTutorialStep(12);
-  else if (i === 15 && eventName === 'special:exchange') showTutorialStep(16);
-  else if (i === 16 && eventName === 'specialDone:exchange') showTutorialStep(17);
+  else if (i === 15 && eventName === 'specialDone:exchange') showTutorialStep(16);
   else if (i === 17 && eventName === 'normal:call') tutorialScriptRound1Cpu();
   else if (i === 23 && eventName === 'special:peek') showTutorialStep(25);
   else if (i === 25 && eventName === 'specialDone:peek') showTutorialStep(26);
@@ -1866,7 +1892,6 @@ function tutorialAdvanceFrom(eventName, detail = {}) {
   else if (i === 36 && eventName === 'special:random') showTutorialStep(37);
   else if (i === 39 && eventName === 'specialDone:random') showTutorialStep(40);
   else if (i === 41 && eventName === 'normal:call') tutorialScriptRound3Cpu();
-  else if (i === 44 && eventName === 'lastFold:continue') showTutorialStep(45);
 }
 
 function tutorialAllowsEvent(target) {
@@ -1878,35 +1903,68 @@ function tutorialAllowsEvent(target) {
 
 function tutorialScriptRound1Cpu() {
   const [, cpu1, cpu2] = state.players;
-  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
-  cpu2.pendingClaim = 'flush';
-  useSpecial(cpu2, 'market', { handIndex: 2, marketIndex: 0 });
-  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'call');
+  tutorial.cpuBusy = true;
   showTutorialStep(18);
-  setTimeout(() => showTutorialStep(19), 1500);
+  runTutorialCpuSequence([
+    () => state.currentPlayerIndex === 1 && normalAction(cpu1, 'call'),
+    () => {
+      cpu2.pendingClaim = 'flush';
+      useSpecial(cpu2, 'market', { handIndex: 2, marketIndex: 0 });
+      render();
+    },
+    () => state.currentPlayerIndex === 2 && normalAction(cpu2, 'call'),
+  ], () => {
+    tutorial.cpuBusy = false;
+    showTutorialStep(18);
+  });
 }
 
 function tutorialScriptRound2CpuRaise() {
   const [, cpu1, cpu2] = state.players;
-  cpu1.pendingClaim = 'royalFlush';
-  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
-  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'raise');
   showTutorialStep(31);
-  setTimeout(() => showTutorialStep(32), 1000);
+  runTutorialCpuSequence([
+    () => {
+      cpu1.pendingClaim = 'royalFlush';
+      render();
+    },
+    () => state.currentPlayerIndex === 1 && normalAction(cpu1, 'call'),
+    () => state.currentPlayerIndex === 2 && normalAction(cpu2, 'raise'),
+  ]);
 }
 
 function tutorialScriptAfterHumanRaise() {
   const [, cpu1, cpu2] = state.players;
-  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
-  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'call');
   showTutorialStep(34);
+  runTutorialCpuSequence([
+    () => state.currentPlayerIndex === 1 && normalAction(cpu1, 'call'),
+    () => state.currentPlayerIndex === 2 && normalAction(cpu2, 'call'),
+  ]);
 }
 
 function tutorialScriptRound3Cpu() {
   const [, cpu1, cpu2] = state.players;
-  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
-  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'call');
   showTutorialStep(42);
+  runTutorialCpuSequence([
+    () => state.currentPlayerIndex === 1 && normalAction(cpu1, 'call'),
+    () => state.currentPlayerIndex === 2 && normalAction(cpu2, 'call'),
+  ]);
+}
+
+function runTutorialCpuSequence(actions, onComplete = null) {
+  tutorialCpuTimerDelay = 0;
+  actions.forEach((action, index) => {
+    tutorialCpuTimerDelay += 750;
+    cpuTimers.push(setTimeout(() => {
+      if (!tutorial?.active) return;
+      action();
+      if (index === actions.length - 1 && onComplete) {
+        const finishDelay = state.phase === 'roundTransition' ? 1100 : 0;
+        cpuTimers.push(setTimeout(() => {
+          if (tutorial?.active) onComplete();
+        }, finishDelay));
+      }
+    }, tutorialCpuTimerDelay));
+  });
 }
 
 function renderTopGameCount() {
@@ -1940,6 +1998,7 @@ function renderMarket() {
     const selectable = specialMode === 'market' && !state.marketLocks[idx] && isHumanTurnBeforeNormal();
     const node = cardNode(card, { selectable });
     node.dataset.marketIndex = idx;
+    node.dataset.cardKey = cardKey(card);
     if (card.id === marketRevealCardId) node.classList.add('market-reveal');
     if (humanPreview?.marketCardIds.has(card.id)) node.classList.add('best-card');
     if (state.marketLocks[idx]) {
@@ -2012,6 +2071,7 @@ function renderSeats() {
       }
       node.dataset.handIndex = idx;
       node.dataset.cardId = card.id;
+      node.dataset.cardKey = cardKey(card);
       if (p.id === 0 && idx === selectedHandIndex) node.classList.add('selected');
       if (bestHand?.cardIds.has(card.id)) node.classList.add('best-card');
       if (handRevealCardIds.has(card.id)) node.classList.add('hand-reveal');
@@ -2408,6 +2468,12 @@ function openClaimBoard() {
     if (tutorial?.active) els.claimBoardDialog.show();
     else els.claimBoardDialog.showModal();
   }
+  if (tutorial?.active && tutorial.index === 29) {
+    tutorial.focus = '[data-claim="four"]';
+    tutorial.allow = '[data-claim="four"]';
+    refreshTutorialFocus();
+    return;
+  }
   tutorialAdvanceFrom('claimOpen');
 }
 
@@ -2746,6 +2812,10 @@ function cardLabel(card) {
   return `${rankLabel(card.rank)}${card.suit}`;
 }
 
+function cardKey(card) {
+  return `${SUITS.indexOf(card.suit)}-${card.rank}`;
+}
+
 function isRed(card) {
   return card.suit === '♥' || card.suit === '♦';
 }
@@ -3004,6 +3074,12 @@ function setSpecialMode(type) {
   selectedMarketIndex = null;
   render();
   renderSpecialDetail(type);
+  if (tutorial?.active && tutorial.index === 15 && type === 'exchange') {
+    tutorial.focus = '.cards-human [data-hand-index="2"]';
+    tutorial.allow = '.cards-human [data-hand-index="2"], #confirmSpecial';
+    refreshTutorialFocus();
+    return;
+  }
   tutorialAdvanceFrom(`special:${type}`);
 }
 
