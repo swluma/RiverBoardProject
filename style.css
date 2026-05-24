@@ -2565,6 +2565,11 @@ body.fallback-fullscreen #app {
   gap: 5px;
   font-weight: 900;
 }
+.final-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
 @media (max-width: 720px), (max-height: 430px) {
   .fullscreen-button {
     top: 5px;
@@ -2596,6 +2601,12 @@ body.fallback-fullscreen #app {
   .final-result-table th,
   .final-result-table td {
     padding: 6px 4px;
+  }
+  .final-actions {
+    justify-content: stretch;
+  }
+  .final-actions button {
+    width: 100%;
   }
 }
 

@@ -2711,6 +2711,28 @@ function leaveTutorial() {
   els.resultPanel.classList.add('hidden');
 }
 
+function returnToSetupWithCurrentSettings() {
+  clearCpuTimers();
+  clearShowdownAnimation();
+  clearTimeout(openingDealTimer);
+  resetSelections();
+  clearTutorialFocus();
+  tutorial = null;
+  state = null;
+  document.body.classList.remove('tutorial-mode');
+  applyTutorialControlState();
+  if (els.quitDialog.open) els.quitDialog.close();
+  if (els.rulesDialog.open) els.rulesDialog.close();
+  if (els.claimBoardDialog.open) els.claimBoardDialog.close();
+  els.gameScreen.classList.add('hidden');
+  els.gameScreen.classList.remove('final-view');
+  els.setupScreen.classList.remove('hidden');
+  els.resultPanel.classList.add('hidden');
+  els.resultPanel.innerHTML = '';
+  els.finalResultScreen.classList.add('hidden');
+  els.finalResultScreen.innerHTML = '';
+}
+
 function renderFinalResults() {
   const visible = state.phase === 'final';
   els.finalResultScreen.classList.toggle('hidden', !visible);
@@ -2749,8 +2771,12 @@ function renderFinalResults() {
         <thead>${tableHeader}</thead>
         <tbody>${rows}</tbody>
       </table>
+      <div class="final-actions">
+        <button id="playAgainButton" class="primary-button" type="button">Play Again</button>
+      </div>
     </div>
   `;
+  document.getElementById('playAgainButton')?.addEventListener('click', returnToSetupWithCurrentSettings);
 }
 
 function formatChipDelta(delta) {
