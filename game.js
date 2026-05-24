@@ -619,10 +619,18 @@ function applyAnimationSync(animation = {}) {
   handRevealCardIds.clear();
   peekFlipCardIds.clear();
   cpuNormalActionPulseIds.clear();
-  (animation.handRevealCardIds || []).forEach(id => handRevealCardIds.add(id));
-  (animation.peekFlipCardIds || []).forEach(id => peekFlipCardIds.add(id));
-  (animation.normalActionPulseIds || []).forEach(id => cpuNormalActionPulseIds.add(id));
+  const handIds = animation.handRevealCardIds || [];
+  const peekIds = animation.peekFlipCardIds || [];
+  const actionIds = animation.normalActionPulseIds || [];
+  handIds.forEach(id => handRevealCardIds.add(id));
+  peekIds.forEach(id => peekFlipCardIds.add(id));
+  actionIds.forEach(id => cpuNormalActionPulseIds.add(id));
   marketRevealCardId = animation.marketRevealCardId || null;
+  if (!hub.session.isHost && (handIds.length || peekIds.length || marketRevealCardId)) playSound('card');
+  if (!hub.session.isHost && actionIds.length) {
+    const folded = state?.players?.some(player => actionIds.includes(player.id) && player.normalAction === 'Fold');
+    playSound(folded ? 'fold' : 'coin');
+  }
 }
 
 function noteAnimationSync(kind, value) {
@@ -914,7 +922,10 @@ function prepareRoomSetup() {
 function renderLobby() {
   if (!hub.session.isRoomPlay || !els.lobbyDialog) return;
   const room = hub.room;
-  const players = orderedHubPlayers(room);
+  const players = orderedHubPlayers(room).map(player => ({
+    ...player,
+    ready: player.id === room?.hostId || !!player.ready,
+  }));
   const readyCount = players.filter(player => player.ready).length;
   els.lobbyRoomCode.textContent = hub.session.roomCode || '----';
   els.lobbyStatus.textContent = hub.lastError || `${hub.connected ? 'Connected' : 'Connecting'} · ${readyCount}/${Math.max(2, players.length)} ready`;
@@ -931,7 +942,7 @@ function renderLobby() {
   els.lobbyStartButton.disabled = !canStart;
   els.startButton.disabled = hub.session.isRoomPlay && (!hub.session.isHost || !canStart);
   els.lobbyStartButton.classList.toggle('hidden', !hub.session.isHost);
-  els.lobbyReadyButton.classList.remove('hidden');
+  els.lobbyReadyButton.classList.toggle('hidden', hub.session.isHost);
   els.lobbyReadyButton.textContent = hub.ready ? 'Ready' : 'Mark Ready';
 }
 
@@ -978,6 +989,7 @@ async function copyLobbyCode() {
 }
 
 function toggleReady() {
+  if (hub.session.isHost) return;
   hub.ready = !hub.ready;
   hubSend(HUB_ROOM_EVENTS.PLAYER_READY, {
     roomCode: hub.session.roomCode,
@@ -1077,7 +1089,11 @@ function setSetupControlsLocked(locked) {
 
 function canHostStartRoom() {
   const players = orderedHubPlayers();
-  return hub.session.isHost && hub.connected && players.length >= 2 && players.every(player => player.ready);
+  const hostId = hub.room?.hostId || players[0]?.id || null;
+  return hub.session.isHost
+    && hub.connected
+    && players.length >= 2
+    && players.every(player => player.id === hostId || player.ready);
 }
 
 function startTable() {
