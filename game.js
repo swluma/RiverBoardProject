@@ -125,6 +125,7 @@ const HUB_ACTION_TYPES = Object.freeze({
   START_STATE: 'role_poker_start_state',
   SNAPSHOT: 'role_poker_snapshot',
   REQUEST_SYNC: 'role_poker_sync_request',
+  PLAYER_META: 'role_poker_player_meta',
   SETUP: 'role_poker_setup',
   CLAIM: 'role_poker_claim',
   SPECIAL: 'role_poker_special',
@@ -250,7 +251,10 @@ const els = {
   quitDialog: document.getElementById('quitDialog'),
   cancelQuitButton: document.getElementById('cancelQuitButton'),
   confirmQuitButton: document.getElementById('confirmQuitButton'),
-  lobbyScreen: document.getElementById('lobbyScreen'),
+  roomButton: document.getElementById('roomButton'),
+  lobbyDialog: document.getElementById('lobbyDialog'),
+  closeLobby: document.getElementById('closeLobby'),
+  copyLobbyCode: document.getElementById('copyLobbyCode'),
   lobbyRoomCode: document.getElementById('lobbyRoomCode'),
   lobbyStatus: document.getElementById('lobbyStatus'),
   lobbyPlayers: document.getElementById('lobbyPlayers'),
@@ -361,6 +365,9 @@ const hub = {
   heartbeatTimer: null,
   applyingRemote: false,
   lastError: '',
+  playerMeta: new Map(),
+  setup: null,
+  pendingResultSnapshot: null,
 };
 
 function makePlayer(id, name, icon, isCpu, chips, color) {
@@ -413,10 +420,11 @@ function createInitialState(cpuCount, startingChips, baseBet) {
   if (hub.session.isRoomPlay && hub.room?.players?.length) {
     players.length = 0;
     orderedHubPlayers().forEach((roomPlayer, index) => {
+      const meta = hub.playerMeta.get(roomPlayer.id) || {};
       const player = makePlayer(
         index,
         sanitizeHubPlayerName(roomPlayer.name) || `Player ${index + 1}`,
-        index === 0 ? selectedIcon : (CPU_ICONS[index - 1] || 'CPU'),
+        meta.icon || (index === 0 ? selectedIcon : (CPU_ICONS[index - 1] || 'CPU')),
         false,
         startingChips,
         PLAYER_COLORS[index] || '#d6e2f5',
@@ -452,6 +460,7 @@ function createInitialState(cpuCount, startingChips, baseBet) {
     publicActionText: 'Public actions appear here.',
     finalResults: [],
     showdownPayout: null,
+    animationSync: { handRevealCardIds: [], peekFlipCardIds: [], normalActionPulseIds: [], marketRevealCardId: null },
     version: 0,
   };
 }
@@ -547,14 +556,21 @@ function cloneGameStateForGuests() {
 function publishSnapshot(reason = 'snapshot') {
   if (!isRoomHost() || !hub.connected || !state || hub.applyingRemote) return;
   bumpVersion();
+  const animation = currentAnimationSync();
   sendHubAction(HUB_ACTION_TYPES.SNAPSHOT, {
     reason,
     state: cloneGameStateForGuests(),
+    animation,
   });
+  clearStateAnimationSync();
 }
 
 function applySnapshot(snapshot) {
   if (!snapshot?.state) return;
+  if (!hub.session.isHost && state?.phase === 'showdown' && showdownAnimation && snapshot.state.phase === 'result') {
+    hub.pendingResultSnapshot = snapshot;
+    return;
+  }
   hub.applyingRemote = true;
   clearCpuTimers(true);
   clearShowdownAnimation();
@@ -562,13 +578,56 @@ function applySnapshot(snapshot) {
   clearTimeout(roundTransitionTimer);
   clearInterval(lastFoldInterval);
   state = snapshot.state;
+  applyAnimationSync(snapshot.animation);
   localPlayerId = hubSeatForPlayerId(hub.session.playerId);
   resetSelections();
   els.setupScreen.classList.add('hidden');
-  els.lobbyScreen?.classList.add('hidden');
+  els.lobbyDialog?.close();
   els.gameScreen.classList.remove('hidden');
-  render();
+  if (state.phase === 'showdown' && Array.isArray(state.finalResults) && state.finalResults.length) {
+    startShowdownAnimation(state.finalResults);
+  } else {
+    render();
+  }
   hub.applyingRemote = false;
+}
+
+function currentAnimationSync() {
+  const queued = state?.animationSync || {};
+  return {
+    handRevealCardIds: [...new Set([...(queued.handRevealCardIds || []), ...Array.from(handRevealCardIds)])],
+    peekFlipCardIds: [...new Set([...(queued.peekFlipCardIds || []), ...Array.from(peekFlipCardIds)])],
+    normalActionPulseIds: [...new Set([...(queued.normalActionPulseIds || []), ...Array.from(cpuNormalActionPulseIds)])],
+    marketRevealCardId: queued.marketRevealCardId || marketRevealCardId,
+  };
+}
+
+function applyAnimationSync(animation = {}) {
+  handRevealCardIds.clear();
+  peekFlipCardIds.clear();
+  cpuNormalActionPulseIds.clear();
+  (animation.handRevealCardIds || []).forEach(id => handRevealCardIds.add(id));
+  (animation.peekFlipCardIds || []).forEach(id => peekFlipCardIds.add(id));
+  (animation.normalActionPulseIds || []).forEach(id => cpuNormalActionPulseIds.add(id));
+  marketRevealCardId = animation.marketRevealCardId || null;
+}
+
+function noteAnimationSync(kind, value) {
+  if (!state) return;
+  if (!state.animationSync) {
+    state.animationSync = { handRevealCardIds: [], peekFlipCardIds: [], normalActionPulseIds: [], marketRevealCardId: null };
+  }
+  if (kind === 'marketRevealCardId') {
+    state.animationSync.marketRevealCardId = value;
+    return;
+  }
+  const list = state.animationSync[kind];
+  if (Array.isArray(list) && value !== undefined && !list.includes(value)) list.push(value);
+}
+
+function clearStateAnimationSync() {
+  if (!state?.animationSync) return;
+  state.animationSync = { handRevealCardIds: [], peekFlipCardIds: [], normalActionPulseIds: [], marketRevealCardId: null };
 }
 
 function validateSeatAction(action, player) {
@@ -599,8 +658,17 @@ function applyAuthoritativeAction(action) {
   } else if (action.type === HUB_ACTION_TYPES.QUIT) {
     endGame('Game ended by the host.');
     changed = true;
+  } else if (action.type === HUB_ACTION_TYPES.PLAYER_META) {
+    applyPlayerMetaAction(action.playerId, action.payload);
+    publishSnapshot('player_meta');
+    return;
+  } else if (action.type === HUB_ACTION_TYPES.SETUP) {
+    applySetupPayload(action.payload);
+    publishSetupSync();
+    return;
   } else if (action.type === HUB_ACTION_TYPES.REQUEST_SYNC) {
     publishSnapshot('sync_request');
+    publishSetupSync();
     return;
   }
   if (changed) publishSnapshot(action.type);
@@ -692,7 +760,7 @@ function connectHubRoom() {
   if (!hub.session.isRoomPlay) return;
   els.playerName.value = hub.session.playerName;
   localPlayerId = hub.session.isHost ? 0 : 1;
-  showLobby();
+  prepareRoomSetup();
   if (!hub.session.valid) {
     hub.lastError = 'Missing room or WebSocket URL.';
     renderLobby();
@@ -709,6 +777,7 @@ function connectHubRoom() {
       player: { id: hub.session.playerId, name: hub.session.playerName },
     });
     hub.heartbeatTimer = setInterval(() => hubSend(HUB_ROOM_EVENTS.HEARTBEAT, { roomCode: hub.session.roomCode }), 15000);
+    sendPlayerMeta();
     renderLobby();
   });
   hub.socket.addEventListener('message', event => {
@@ -738,6 +807,8 @@ function handleHubMessage(type, payload) {
     hub.ready = !!hub.room?.players?.find(player => player.id === hub.session.playerId)?.ready;
     localPlayerId = hubSeatForPlayerId(hub.session.playerId);
     renderLobby();
+    sendPlayerMeta();
+    if (hub.session.isHost) publishSetupSync();
     if (!hub.session.isHost) {
       hubSend(HUB_ROOM_EVENTS.SYNC_REQUEST, { roomCode: hub.session.roomCode });
       sendHubAction(HUB_ACTION_TYPES.REQUEST_SYNC);
@@ -746,6 +817,7 @@ function handleHubMessage(type, payload) {
   }
   if (type === HUB_SERVER_EVENTS.PLAYER_JOINED || type === HUB_SERVER_EVENTS.PLAYER_LEFT || type === HUB_SERVER_EVENTS.PLAYER_READY) {
     if (hub.session.isHost && state) window.setTimeout(() => publishSnapshot(type), 60);
+    if (hub.session.isHost && !state) window.setTimeout(() => publishSetupSync(), 60);
     renderLobby();
     return;
   }
@@ -758,6 +830,17 @@ function handleHubMessage(type, payload) {
   if (type === HUB_SERVER_EVENTS.GAME_ACTION) {
     const action = payload.action;
     if (!action || hub.processedActions.has(action.id)) return;
+    if (action.type === HUB_ACTION_TYPES.PLAYER_META) {
+      hub.processedActions.add(action.id);
+      applyPlayerMetaAction(action.playerId, action.payload);
+      renderLobby();
+      return;
+    }
+    if (action.type === HUB_ACTION_TYPES.SETUP) {
+      hub.processedActions.add(action.id);
+      if (!hub.session.isHost) applySetupPayload(action.payload);
+      return;
+    }
     if (action.type === HUB_ACTION_TYPES.SNAPSHOT || action.type === HUB_ACTION_TYPES.START_STATE) {
       hub.processedActions.add(action.id);
       if (!hub.session.isHost) applySnapshot(action.payload);
@@ -770,6 +853,7 @@ function handleHubMessage(type, payload) {
     hub.room = payload.room || hub.room;
     const action = payload.lastAction;
     if (action?.type === HUB_ACTION_TYPES.SNAPSHOT && !hub.session.isHost) applySnapshot(action.payload);
+    if (action?.type === HUB_ACTION_TYPES.SETUP && !hub.session.isHost) applySetupPayload(action.payload);
     renderLobby();
     return;
   }
@@ -782,20 +866,23 @@ function handleHubMessage(type, payload) {
     hub.lastError = payload.message || 'Room closed.';
     hub.connected = false;
     hub.started = false;
-    showLobby();
+    prepareRoomSetup();
     renderLobby();
   }
 }
 
-function showLobby() {
-  els.setupScreen.classList.add('hidden');
+function prepareRoomSetup() {
+  els.setupScreen.classList.remove('hidden');
   els.gameScreen.classList.add('hidden');
-  els.lobbyScreen?.classList.remove('hidden');
+  els.roomButton?.classList.remove('hidden');
+  els.playerName.disabled = true;
+  els.cpuCount.disabled = true;
+  setSetupControlsLocked(!hub.session.isHost);
   renderLobby();
 }
 
 function renderLobby() {
-  if (!hub.session.isRoomPlay || !els.lobbyScreen) return;
+  if (!hub.session.isRoomPlay || !els.lobbyDialog) return;
   const room = hub.room;
   const players = orderedHubPlayers(room);
   const readyCount = players.filter(player => player.ready).length;
@@ -803,17 +890,18 @@ function renderLobby() {
   els.lobbyStatus.textContent = hub.lastError || `${hub.connected ? 'Connected' : 'Connecting'} · ${readyCount}/${Math.max(2, players.length)} ready`;
   els.lobbyPlayers.innerHTML = players.length
     ? players.map((player, index) => `
-      <li>
-        <span>${index === 0 ? 'Host' : 'Guest'}</span>
-        <strong>${escapeHtml(player.name || `Player ${index + 1}`)}</strong>
-        <em>${player.ready ? 'Ready' : 'Not ready'}</em>
-      </li>
+      <article class="lobby-player-card">
+        <span class="lobby-player-icon">${escapeHtml(playerIconForHubPlayer(player, index))}</span>
+        <span class="lobby-player-name">${escapeHtml(player.name || `Player ${index + 1}`)} <span>${index === 0 ? 'Host' : 'Guest'}</span></span>
+        <span class="lobby-player-ready ${player.ready ? 'ready' : ''}">${player.ready ? 'Ready' : 'Not ready'}</span>
+      </article>
     `).join('')
-    : '<li><span>Waiting</span><strong>No players connected</strong><em>-</em></li>';
-  const canStart = hub.session.isHost && hub.connected && players.length >= 2 && players.every(player => player.ready);
+    : '<article class="lobby-player-card"><span class="lobby-player-icon">?</span><span class="lobby-player-name">Waiting</span><span class="lobby-player-ready">-</span></article>';
+  const canStart = canHostStartRoom();
   els.lobbyStartButton.disabled = !canStart;
+  els.startButton.disabled = hub.session.isRoomPlay && (!hub.session.isHost || !canStart);
   els.lobbyStartButton.classList.toggle('hidden', !hub.session.isHost);
-  els.lobbyReadyButton.classList.toggle('hidden', hub.session.isHost);
+  els.lobbyReadyButton.classList.remove('hidden');
   els.lobbyReadyButton.textContent = hub.ready ? 'Ready' : 'Mark Ready';
 }
 
@@ -825,7 +913,8 @@ function startRoomGameAsHost() {
   syncSetupAmount(els.pointsToWin, els.pointsToWinSlider);
   syncSetupAmount(els.foldWinPoints, els.foldWinPointsSlider);
   state = createInitialState(0, Number(els.startingChips.value), Number(els.baseBet.value));
-  els.lobbyScreen?.classList.add('hidden');
+  els.lobbyDialog?.close();
+  els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   startNewGame();
   publishSnapshot(HUB_ACTION_TYPES.START_STATE);
@@ -840,8 +929,24 @@ function requestRoomStart() {
   });
 }
 
+function openLobbyDialog() {
+  if (!hub.session.isRoomPlay || !els.lobbyDialog) return;
+  renderLobby();
+  if (!els.lobbyDialog.open) els.lobbyDialog.showModal();
+}
+
+async function copyLobbyCode() {
+  const code = hub.session.roomCode || '';
+  if (!code) return;
+  try {
+    await navigator.clipboard?.writeText(code);
+    els.lobbyStatus.textContent = `Copied ${code}`;
+  } catch {
+    els.lobbyStatus.textContent = code;
+  }
+}
+
 function toggleReady() {
-  if (hub.session.isHost) return;
   hub.ready = !hub.ready;
   hubSend(HUB_ROOM_EVENTS.PLAYER_READY, {
     roomCode: hub.session.roomCode,
@@ -861,6 +966,87 @@ function currentSetupPayload() {
     pointsToWin: Number(els.pointsToWin.value),
     foldWinPoints: Number(els.foldWinPoints.value),
   };
+}
+
+function applySetupPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return;
+  hub.applyingRemote = true;
+  setSetupMode(payload.selectedMode === 'points' ? 'points' : 'chips');
+  setSetupValue(els.startingChips, els.startingChipsSlider, payload.startingChips);
+  setSetupValue(els.baseBet, els.baseBetSlider, payload.baseBet);
+  setSetupValue(els.maxGames, els.maxGamesSlider, payload.maxGames);
+  setSetupValue(els.handCardCount, els.handCardCountSlider, payload.handCardCount);
+  setSetupValue(els.pointsToWin, els.pointsToWinSlider, payload.pointsToWin);
+  setSetupValue(els.foldWinPoints, els.foldWinPointsSlider, payload.foldWinPoints);
+  hub.setup = currentSetupPayload();
+  hub.applyingRemote = false;
+}
+
+function setSetupValue(input, slider, value) {
+  if (value === undefined || value === null || !input || !slider) return;
+  input.value = value;
+  syncSetupAmount(input, slider);
+}
+
+function publishSetupSync() {
+  if (!hub.session.isRoomPlay || !hub.session.isHost || !hub.connected || hub.applyingRemote) return;
+  hub.setup = currentSetupPayload();
+  sendHubAction(HUB_ACTION_TYPES.SETUP, hub.setup);
+}
+
+function sendPlayerMeta() {
+  if (!hub.session.isRoomPlay || !hub.connected) return;
+  const payload = { icon: selectedIcon };
+  applyPlayerMetaAction(hub.session.playerId, payload);
+  sendHubAction(HUB_ACTION_TYPES.PLAYER_META, payload);
+}
+
+function applyPlayerMetaAction(playerId, payload = {}) {
+  if (!playerId) return;
+  const existing = hub.playerMeta.get(playerId) || {};
+  const icon = String(payload.icon || existing.icon || '').slice(0, 8);
+  hub.playerMeta.set(playerId, { ...existing, icon });
+  const player = state?.players?.find(entry => entry.hubPlayerId === playerId);
+  if (player && icon) {
+    player.icon = icon;
+    render();
+  }
+}
+
+function playerIconForHubPlayer(player, index) {
+  return hub.playerMeta.get(player.id)?.icon || (index === 0 ? selectedIcon : (CPU_ICONS[index - 1] || '?'));
+}
+
+function setSetupControlsLocked(locked) {
+  [
+    els.chipModeTab,
+    els.pointModeTab,
+    els.startingChips,
+    els.startingChipsSlider,
+    els.baseBet,
+    els.baseBetSlider,
+    els.maxGames,
+    els.maxGamesSlider,
+    els.handCardCount,
+    els.handCardCountSlider,
+    els.pointsToWin,
+    els.pointsToWinSlider,
+    els.foldWinPoints,
+    els.foldWinPointsSlider,
+  ].forEach(control => {
+    if (control) control.disabled = locked;
+  });
+  document.querySelectorAll('.setup-reset-button').forEach(button => {
+    button.disabled = locked;
+  });
+  if (els.startButton) {
+    els.startButton.disabled = hub.session.isRoomPlay && (!hub.session.isHost || !canHostStartRoom());
+  }
+}
+
+function canHostStartRoom() {
+  const players = orderedHubPlayers();
+  return hub.session.isHost && hub.connected && players.length >= 2 && players.every(player => player.ready);
 }
 
 function startTable() {
@@ -885,6 +1071,9 @@ function startTable() {
 }
 
 function startTutorial() {
+  if (hub.session.isRoomPlay && !hub.session.isHost && hub.ready) {
+    toggleReady();
+  }
   clearCpuTimers();
   const setupMode = selectedMode;
   selectedMode = 'chips';
@@ -1021,6 +1210,7 @@ function addReservedMarketCard(round) {
   state.market.push(card);
   state.marketLocks.push(false);
   marketRevealCardId = card.id;
+  noteAnimationSync('marketRevealCardId', card.id);
   playSound('card');
   pulse(`A reserved market card was added for round ${round}.`);
 }
@@ -1249,7 +1439,6 @@ function resolveShowdown() {
   if (state.showdownPayout) state.showdownPayout.chipDeltas = chipDeltas;
   state.phase = 'result';
   state.finalResults = results;
-  publishSnapshot('showdown_resolved');
   startShowdownAnimation(results);
 }
 
@@ -1273,6 +1462,7 @@ function startShowdownAnimation(results) {
     rankIndexByPlayerId: new Map(ranked.map((result, index) => [result.player.id, index])),
   };
   render();
+  publishSnapshot('showdown_started');
   playShowdownAnimation(showdownAnimationToken, publishedResults);
 }
 
@@ -1325,6 +1515,11 @@ async function playShowdownAnimation(token, results) {
   if (!await waitForShowdownStep(SHOWDOWN_INTERVAL, token)) return;
   state.phase = 'result';
   showdownAnimation = null;
+  if (!hub.session.isHost && hub.pendingResultSnapshot?.state) {
+    state = hub.pendingResultSnapshot.state;
+    applyAnimationSync(hub.pendingResultSnapshot.animation);
+    hub.pendingResultSnapshot = null;
+  }
   render();
   publishSnapshot('showdown_complete');
 }
@@ -1491,6 +1686,7 @@ function normalAction(player, action) {
     player.actedThisRound = true;
     player.normalAction = 'Fold';
     cpuNormalActionPulseIds.add(player.id);
+    noteAnimationSync('normalActionPulseIds', player.id);
     playSound('fold');
     pulse(`${player.name} folded.`);
     nextTurn(idx);
@@ -1516,6 +1712,7 @@ function normalAction(player, action) {
     player.actedThisRound = true;
     player.normalAction = 'Raise';
     cpuNormalActionPulseIds.add(player.id);
+    noteAnimationSync('normalActionPulseIds', player.id);
     pulse(`${player.name} raised. Round call is now ${state.roundTarget}.`);
     nextTurn(idx);
     if (player.id === 0) tutorialAdvanceFrom('normal:raise');
@@ -1528,6 +1725,7 @@ function normalAction(player, action) {
     player.actedThisRound = true;
     player.normalAction = player.allIn ? 'All-in' : 'Call';
     cpuNormalActionPulseIds.add(player.id);
+    noteAnimationSync('normalActionPulseIds', player.id);
     pulse(`${player.name} ${player.allIn ? 'went all-in' : 'called'}.`);
     nextTurn(idx);
     if (player.id === 0) tutorialAdvanceFrom('normal:call');
@@ -1646,11 +1844,13 @@ function makePublicHandCard(player, card) {
 
 function queueHandReveal(card) {
   if (card) handRevealCardIds.add(card.id);
+  if (card) noteAnimationSync('handRevealCardIds', card.id);
   if (card) playSound('card');
 }
 
 function queuePeekFlip(card) {
   if (card) peekFlipCardIds.add(card.id);
+  if (card) noteAnimationSync('peekFlipCardIds', card.id);
   if (card) playSound('card');
 }
 
@@ -3191,10 +3391,11 @@ function resultActionButtons() {
   }
   const nextLabel = isMatchOver() ? 'Final Results' : 'Next Game';
   const nextDisabled = hub.session.isRoomPlay && !hub.session.isHost ? 'disabled' : '';
+  const quitDisabled = hub.session.isRoomPlay && !hub.session.isHost ? 'disabled' : '';
   return `
     <div class="result-actions">
       <button id="nextGameButton" class="primary-button" type="button" ${nextDisabled}>${nextLabel}</button>
-      <button id="quitGameButton" class="danger-button" type="button">Quit</button>
+      <button id="quitGameButton" class="danger-button" type="button" ${quitDisabled}>Quit</button>
     </div>
   `;
 }
@@ -3226,6 +3427,7 @@ function leaveTutorial() {
   applyTutorialControlState();
   els.gameScreen.classList.add('hidden');
   els.setupScreen.classList.remove('hidden');
+  if (hub.session.isRoomPlay) prepareRoomSetup();
   els.resultPanel.classList.add('hidden');
 }
 
@@ -3697,12 +3899,22 @@ function syncSetupAmount(source, target) {
 }
 
 function bindSetupAmount(input, slider) {
-  input?.addEventListener('input', () => syncSetupAmount(input, slider));
-  slider?.addEventListener('input', () => syncSetupAmount(slider, input));
-  input?.addEventListener('change', () => syncSetupAmount(input, slider));
+  input?.addEventListener('input', () => {
+    syncSetupAmount(input, slider);
+    publishSetupSync();
+  });
+  slider?.addEventListener('input', () => {
+    syncSetupAmount(slider, input);
+    publishSetupSync();
+  });
+  input?.addEventListener('change', () => {
+    syncSetupAmount(input, slider);
+    publishSetupSync();
+  });
   document.querySelector(`[data-reset-target="${input?.id}"]`)?.addEventListener('click', () => {
     input.value = input.defaultValue;
     syncSetupAmount(input, slider);
+    publishSetupSync();
   });
 }
 
@@ -3712,6 +3924,7 @@ function setSetupMode(mode) {
   els.pointModeTab.classList.toggle('selected', selectedMode === 'points');
   els.chipModePanel.classList.toggle('hidden', selectedMode !== 'chips');
   els.pointModePanel.classList.toggle('hidden', selectedMode !== 'points');
+  publishSetupSync();
 }
 
 function setSpecialMode(type) {
@@ -3844,6 +4057,9 @@ document.addEventListener('click', event => {
   }
 }, true);
 els.startButton.addEventListener('click', startTable);
+els.roomButton?.addEventListener('click', openLobbyDialog);
+els.closeLobby?.addEventListener('click', () => els.lobbyDialog?.close());
+els.copyLobbyCode?.addEventListener('click', copyLobbyCode);
 els.lobbyStartButton?.addEventListener('click', requestRoomStart);
 els.lobbyReadyButton?.addEventListener('click', toggleReady);
 els.tutorialButton.addEventListener('click', startTutorial);
@@ -3918,6 +4134,8 @@ els.iconPicker.addEventListener('click', e => {
   if (!button) return;
   selectedIcon = button.dataset.icon;
   document.querySelectorAll('.icon-choice').forEach(b => b.classList.toggle('selected', b === button));
+  sendPlayerMeta();
+  renderLobby();
 });
 window.addEventListener('beforeunload', () => clearCpuTimers(true));
 

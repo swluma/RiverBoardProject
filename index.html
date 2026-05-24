@@ -20,6 +20,7 @@
       <div class="setup-card floating-panel">
         <h1>Role Board Poker</h1>
         <button id="tutorialButton" class="tutorial-start-button" type="button">Tutorial</button>
+        <button id="roomButton" class="room-open-button hidden" type="button">Room</button>
         <p class="setup-subtitle">Choose your name and icon before taking the lower seat.</p>
         <div class="mode-tabs" role="tablist" aria-label="Play mode">
           <button id="chipModeTab" class="mode-tab selected" type="button" data-mode="chips">Chip Mode</button>
@@ -87,19 +88,22 @@
       </div>
     </section>
 
-    <section id="lobbyScreen" class="lobby-screen hidden">
-      <div class="setup-table"></div>
-      <div class="lobby-card floating-panel">
+    <dialog id="lobbyDialog" class="lobby-dialog floating-panel">
+      <button id="closeLobby" class="close-button" type="button">Ã—</button>
+      <div class="lobby-card">
         <span class="mini-label">Room</span>
-        <h1 id="lobbyRoomCode">----</h1>
+        <div class="lobby-code-row">
+          <h1 id="lobbyRoomCode">----</h1>
+          <button id="copyLobbyCode" type="button">Copy</button>
+        </div>
         <p id="lobbyStatus" class="setup-subtitle">Connecting</p>
-        <ul id="lobbyPlayers" class="lobby-players"></ul>
+        <div id="lobbyPlayers" class="lobby-players"></div>
         <div class="lobby-actions">
           <button id="lobbyReadyButton" class="primary-button" type="button">Mark Ready</button>
           <button id="lobbyStartButton" class="center-start lobby-start" type="button">Start Game</button>
         </div>
       </div>
-    </section>
+    </dialog>
 
     <main id="gameScreen" class="game-screen hidden">
       <section id="tableArea" class="table-area">
