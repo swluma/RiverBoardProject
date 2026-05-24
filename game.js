@@ -100,6 +100,59 @@ const SHOWDOWN_CARD_FLIP_TIME = 540;
 const SHOWDOWN_POINT_TIME = 500;
 const SHOWDOWN_RANK_TIME = 650;
 
+const TUTORIAL_TEXTS = [
+  'In Showdown, the player with the highest point total wins every chip in the pot.',
+  'Antes are paid automatically. If the ante is greater than a player\'s remaining chips, that player goes all-in.',
+  'Round 1. When your turn arrives, start by checking your hand.',
+  'Click the Hands button in the top-right corner.',
+  'This list shows each hand and its points. Stronger hands are worth more points.',
+  'Close the modal by clicking the X in the top-right corner.',
+  'The Role Board lets you present one poker hand. Click your Role Board.',
+  'Choose one hand to present on your board. Board changes are revealed together at the end of the round, so later players cannot react to your private change immediately.',
+  'Your current best hand is Two Pair. If your Showdown hand matches or beats your presented role, you gain the bonus points tied to that role.',
+  'If your Showdown hand is weaker than your presented role, you lose the point difference between that role and your actual best hand. You can still aim high and try to complete the hand with special moves before Showdown.',
+  'You can play honestly for bonus points, or bluff to mislead your opponents. Watch other players\' boards and decide what they really mean.',
+  'For this tutorial, choose Full House.',
+  'Role Board changes are allowed through Round 2. In Round 3, your board is locked.',
+  'You may use one special action each round. Each special action can be used up to twice per game.',
+  'Card Exchange lets you discard one card from your hand and draw the top card from the stock. It cannot be used when the stock is empty.',
+  'Use it now. Select your heart 6, then press Confirm.',
+  'You drew a new card. Your best hand with the market improved from Two Pair to Full House.',
+  'Press Call. The required chips are taken from your stack and moved into the pot.',
+  'CPU turns are scripted here: Mira calls, while Brakk presents Flush, uses Market Swap, and calls. Your best hand drops back to Two Pair.',
+  'Round 2. A new market card appears. You can change your Role Board and use one special action again.',
+  'The club Ace is gone from the market. Check the opponents\' special action history.',
+  'Brakk used Market Swap, trading a hand card for the club Ace from the market.',
+  'Market Swap trades one hand card with one unlocked market card. The new market card becomes locked and cannot be swapped again, but it still counts as a normal market card.',
+  'Brakk is presenting Flush. Is it true? Use Reveal Proof to get a clue.',
+  'Reveal Proof selects an opponent and reveals one hand card from that opponent\'s current best hand to everyone.',
+  'Use Reveal Proof on Brakk. Select Brakk in the dropdown, then press Confirm.',
+  'Brakk\'s club 8 is now public. It matches the club Ace he took, so a club Flush is a real threat.',
+  'But the diamond 10 is now in the market. With only the diamond Queen, you can make a diamond Royal Flush.',
+  'That diamond 10 is locked, so it is fixed from now on. Nobody can steal it with Market Swap.',
+  'If the diamond Jack gets taken, your Royal Flush path disappears. Hide your plan by changing your board to Four of a Kind.',
+  'Call to continue.',
+  'CPU turns are scripted again. Mira presents Royal Flush and calls. Brakk raises, so the turn comes back to you.',
+  'Raise doubles the current call target. When any player raises, players who already called must respond again with Call, Raise, or Fold.',
+  'Each player can raise up to three times per game. Try raising now.',
+  'Round 3 is the final round. Your Role Board is now locked.',
+  'Mira is presenting Royal Flush. It may be a bluff, but you should still chase the diamond Queen.',
+  'Use Random Exchange.',
+  'Random Exchange discards up to three random eligible hand cards and draws the same number from the stock. If the stock has fewer cards, it draws as many as possible.',
+  'The first time you use Random Exchange, you also draw one extra die card from the stock. Die cards are public and cannot be discarded by Random Exchange.',
+  'Exchange one random card. Select 1, then press Confirm.',
+  'You gained the diamond Queen as a die card. Together with the market, you now have a diamond Royal Flush. The die card is public, so opponents can see it.',
+  'Call and pass the turn.',
+  'After Round 3, each player chooses whether to Last Fold before Showdown. If time expires, players continue automatically. If everyone Last Folds, the pot carries into the next game.',
+  'Last Fold refunds half your contributed chips if you are not first, but you cannot win the pot. Your hand is still revealed at Showdown.',
+  'This time, continue. Click Continue.',
+  'After Round 3 comes Showdown. Hands are revealed and points are calculated.',
+  'Your best hand is a Royal Flush. It beats Four of a Kind, so you gain the Four of a Kind bonus.',
+  'Mira has only a club Queen High Card. Because her board claimed Royal Flush, she takes a large penalty.',
+  'Brakk makes a club Flush. His presented role is also Flush, so he gains the Flush bonus.',
+  'You earned the most points and win the whole pot.',
+];
+
 const els = {
   setupScreen: document.getElementById('setupScreen'),
   gameScreen: document.getElementById('gameScreen'),
@@ -123,6 +176,7 @@ const els = {
   foldWinPoints: document.getElementById('foldWinPoints'),
   foldWinPointsSlider: document.getElementById('foldWinPointsSlider'),
   startButton: document.getElementById('startButton'),
+  tutorialButton: document.getElementById('tutorialButton'),
   tableArea: document.getElementById('tableArea'),
   roundLabel: document.getElementById('roundLabel'),
   potLabel: document.getElementById('potLabel'),
@@ -184,6 +238,7 @@ let showdownAnimationTimers = [];
 let audioContext = null;
 let coinSoundTemplate = null;
 let cardSoundTemplate = null;
+let tutorial = null;
 const handRevealCardIds = new Set();
 const peekFlipCardIds = new Set();
 const cpuNormalActionPulseIds = new Set();
@@ -273,12 +328,35 @@ function createInitialState(cpuCount, startingChips, baseBet) {
 }
 
 function makeDeck() {
+  if (tutorial?.active) return makeTutorialDeck();
   let id = 1;
   const deck = [];
   for (const suit of SUITS) {
     for (const rank of RANKS) deck.push({ id: id++, suit, rank });
   }
   return shuffle(deck);
+}
+
+function makeTutorialCard(suitIndex, rank, id) {
+  return { id, suit: SUITS[suitIndex], rank };
+}
+
+function makeTutorialDeck() {
+  let id = 1000;
+  const c = (suitIndex, rank) => makeTutorialCard(suitIndex, rank, id++);
+  const popOrder = [
+    c(2, 13), c(1, 9), c(3, 6),
+    c(3, 13), c(1, 3), c(3, 8),
+    c(1, 6), c(0, 5), c(2, 10),
+    c(2, 14), c(0, 7), c(0, 3),
+    c(1, 7), c(3, 12), c(0, 6),
+    c(3, 14), c(2, 11), c(3, 2),
+    c(3, 4), c(0, 8),
+    c(1, 14), c(0, 8), c(2, 12),
+  ];
+  const filler = [];
+  for (let i = 2; i <= 14; i++) filler.push(c(i % SUITS.length, i));
+  return filler.concat(popOrder.slice().reverse());
 }
 
 function shuffle(array) {
@@ -297,6 +375,9 @@ function drawFromStock() {
 
 function startTable() {
   clearCpuTimers();
+  tutorial = null;
+  document.body.classList.remove('tutorial-mode');
+  applyTutorialControlState();
   syncSetupAmount(els.startingChips, els.startingChipsSlider);
   syncSetupAmount(els.baseBet, els.baseBetSlider);
   syncSetupAmount(els.maxGames, els.maxGamesSlider);
@@ -307,6 +388,33 @@ function startTable() {
   els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   startNewGame();
+}
+
+function startTutorial() {
+  clearCpuTimers();
+  setSetupMode('chips');
+  els.cpuCount.value = '2';
+  els.startingChips.value = '100';
+  els.startingChipsSlider.value = '100';
+  els.baseBet.value = '5';
+  els.baseBetSlider.value = '5';
+  els.maxGames.value = '1';
+  els.maxGamesSlider.value = '1';
+  els.handCardCount.value = '5';
+  els.handCardCountSlider.value = '5';
+  syncSetupAmount(els.startingChips, els.startingChipsSlider);
+  syncSetupAmount(els.baseBet, els.baseBetSlider);
+  syncSetupAmount(els.maxGames, els.maxGamesSlider);
+  syncSetupAmount(els.handCardCount, els.handCardCountSlider);
+  tutorial = { active: true, index: 0, allow: null, focus: null, cpuRound2Raised: false };
+  state = createInitialState(2, 100, 5);
+  state.tutorial = true;
+  els.setupScreen.classList.add('hidden');
+  els.gameScreen.classList.remove('hidden');
+  ensureTutorialUi();
+  document.body.classList.add('tutorial-mode');
+  startNewGame();
+  setTimeout(() => showTutorialStep(0), 500);
 }
 
 function startNewGame() {
@@ -530,6 +638,15 @@ function beginLastFold() {
   let time = 7;
   els.lastFoldTimer.textContent = time;
   render();
+  if (tutorial?.active) {
+    state.players[1].lastFoldChoice = 'lastFold';
+    state.players[1].lastFolded = true;
+    state.players[2].lastFoldChoice = 'continue';
+    els.lastFoldTimer.textContent = 'Paused';
+    render();
+    showTutorialStep(42);
+    return;
+  }
   for (const p of state.players.filter(p => p.isCpu && !p.out && !p.folded && !p.allIn)) cpuLastFoldDecision(p);
   clearInterval(lastFoldInterval);
   lastFoldInterval = setInterval(() => {
@@ -555,9 +672,11 @@ function chooseLastFold(player, choice) {
   pulse(`${player.name} chose ${choice === 'lastFold' ? 'Last Fold' : 'Continue'}.`);
   if (allLastFoldChoicesMade()) {
     finishLastFold();
+    if (player.id === 0) tutorialAdvanceFrom(`lastFold:${choice}`);
     return;
   }
   render();
+  if (player.id === 0) tutorialAdvanceFrom(`lastFold:${choice}`);
 }
 
 function allLastFoldChoicesMade() {
@@ -831,6 +950,7 @@ function normalAction(player, action) {
     cpuNormalActionPulseIds.add(player.id);
     pulse(`${player.name} folded.`);
     nextTurn(idx);
+    if (player.id === 0) tutorialAdvanceFrom('normal:fold');
     return;
   }
 
@@ -854,6 +974,7 @@ function normalAction(player, action) {
     cpuNormalActionPulseIds.add(player.id);
     pulse(`${player.name} raised. Round call is now ${state.roundTarget}.`);
     nextTurn(idx);
+    if (player.id === 0) tutorialAdvanceFrom('normal:raise');
     return;
   }
 
@@ -865,6 +986,7 @@ function normalAction(player, action) {
     cpuNormalActionPulseIds.add(player.id);
     pulse(`${player.name} ${player.allIn ? 'went all-in' : 'called'}.`);
     nextTurn(idx);
+    if (player.id === 0) tutorialAdvanceFrom('normal:call');
   }
 }
 
@@ -913,7 +1035,7 @@ function specialRandomExchange(player, count) {
   const max = Math.min(eligibleIndices.length, RANDOM_EXCHANGE_CARD_LIMIT, state.stock.length - stockReservedForBonus);
   if (max <= 0) return false;
   const n = Math.max(1, Math.min(Number(count) || 1, max));
-  const indices = shuffle(eligibleIndices).slice(0, n);
+  const indices = tutorial?.active && !player.isCpu ? eligibleIndices.slice(-n) : shuffle(eligibleIndices).slice(0, n);
   for (const index of indices) {
     const old = player.hand[index];
     const next = drawFromStock();
@@ -945,7 +1067,10 @@ function specialPeek(player, targetId) {
   const target = state.players.find(p => p.id === Number(targetId));
   const cards = revealProofCards(target, player);
   if (!cards.length) return false;
-  const card = cards[Math.floor(Math.random() * cards.length)];
+  const tutorialCard = tutorial?.active && !player.isCpu && target?.id === 2
+    ? cards.find(candidate => candidate.rank === 8 && candidate.suit === SUITS[3])
+    : null;
+  const card = tutorialCard || cards[Math.floor(Math.random() * cards.length)];
   makePublicHandCard(target, card);
   queuePeekFlip(card);
   if (!player.isCpu) pulse(`${player.name} revealed ${target.name}'s proof: ${cardLabel(card)}.`);
@@ -992,6 +1117,7 @@ function clearQueuedCardAnimations() {
 
 function maybeCpuTurn() {
   clearCpuTimers(false);
+  if (tutorial?.active) return;
   if (!state || state.phase !== 'round') return;
   const player = state.players[state.currentPlayerIndex];
   if (!player || !player.isCpu) return;
@@ -1559,6 +1685,222 @@ function render() {
   renderResults();
   renderFinalResults();
   if (els.claimBoardDialog.open) renderClaimBoardOptions();
+  refreshTutorialFocus();
+}
+
+function ensureTutorialUi() {
+  if (!document.querySelector('.tutorial-dim')) {
+    const dim = document.createElement('div');
+    dim.className = 'tutorial-dim';
+    document.body.appendChild(dim);
+  }
+  if (!document.querySelector('.tutorial-popover')) {
+    const pop = document.createElement('section');
+    pop.className = 'tutorial-popover';
+    pop.setAttribute('aria-live', 'polite');
+    pop.innerHTML = '<p id="tutorialText"></p><div class="tutorial-popover-actions"><button id="tutorialNext" class="primary-button" type="button">Next</button></div>';
+    document.body.appendChild(pop);
+    pop.querySelector('#tutorialNext').addEventListener('click', tutorialNext);
+  }
+}
+
+function tutorialStepConfig(index) {
+  const actionSteps = {
+    3: { focus: '#rulesButton', allow: '#rulesButton', wait: true },
+    4: { focus: '#closeRules', allow: '#closeRules', wait: true },
+    5: { focus: '#closeRules', allow: '#closeRules', wait: true },
+    6: { focus: '.info-claim-trigger', allow: '.info-claim-trigger', wait: true },
+    11: { focus: '[data-claim="fullHouse"]', allow: '[data-claim="fullHouse"]', wait: true },
+    15: { focus: '[data-special="exchange"]', allow: '[data-special="exchange"], [data-hand-index="2"], #confirmSpecial', wait: true },
+    16: { focus: '[data-hand-index="2"]', allow: '[data-hand-index="2"], #confirmSpecial', wait: true },
+    17: { focus: '#callButton', allow: '#callButton', wait: true },
+    23: { focus: '[data-special="peek"]', allow: '[data-special="peek"]', wait: true },
+    25: { focus: '#peekTarget', allow: '#peekTarget, #confirmSpecial', wait: true },
+    29: { focus: '.info-claim-trigger', allow: '.info-claim-trigger, [data-claim="four"]', wait: true },
+    30: { focus: '#callButton', allow: '#callButton', wait: true },
+    33: { focus: '#raiseButton', allow: '#raiseButton', wait: true },
+    36: { focus: '[data-special="random"]', allow: '[data-special="random"]', wait: true },
+    39: { focus: '#randomCount', allow: '#randomCount, #confirmSpecial', wait: true },
+    41: { focus: '#callButton', allow: '#callButton', wait: true },
+    44: { focus: '#continueButton', allow: '#continueButton', wait: true },
+  };
+  const focusOnly = {
+    8: '[data-hand-index="0"], [data-hand-index="1"], #marketCards',
+    9: '[data-claim="fullHouse"]',
+    14: '[data-special="exchange"]',
+    20: '#marketCards',
+    21: '.info-top-right .action-icons',
+    22: '[data-special="market"]',
+    24: '[data-special="peek"]',
+    26: '.cards-top-right .field-cards',
+    27: '#marketCards, [data-hand-index="0"], [data-hand-index="3"]',
+    35: '[data-special="random"]',
+    45: '.cards-human, #marketCards, .info-human',
+    46: '.cards-top-left, #marketCards, .info-top-left',
+    47: '.cards-top-right, #marketCards, .info-top-right',
+  };
+  return actionSteps[index] || { focus: focusOnly[index] || null, allow: null, wait: false };
+}
+
+function showTutorialStep(index) {
+  if (!tutorial?.active) return;
+  tutorial.index = index;
+  ensureTutorialUi();
+  const text = TUTORIAL_TEXTS[index] || 'Tutorial complete.';
+  document.getElementById('tutorialText').textContent = text;
+  const config = tutorialStepConfig(index);
+  tutorial.focus = config.focus;
+  tutorial.allow = config.allow;
+  const next = document.getElementById('tutorialNext');
+  next.classList.toggle('hidden', !!config.wait);
+  next.textContent = index >= TUTORIAL_TEXTS.length - 1 ? 'Finish' : 'Next';
+  refreshTutorialFocus();
+}
+
+function tutorialNext() {
+  if (!tutorial?.active) return;
+  if (tutorial.index >= TUTORIAL_TEXTS.length - 1) {
+    document.body.classList.remove('tutorial-mode');
+    tutorial = null;
+    clearTutorialFocus();
+    applyTutorialControlState();
+    return;
+  }
+  showTutorialStep(tutorial.index + 1);
+}
+
+function clearTutorialFocus() {
+  document.querySelectorAll('.tutorial-focus').forEach(el => el.classList.remove('tutorial-focus'));
+  document.querySelectorAll('.tutorial-lift').forEach(el => el.classList.remove('tutorial-lift'));
+}
+
+function refreshTutorialFocus() {
+  clearTutorialFocus();
+  applyTutorialControlState();
+  if (!tutorial?.active || !tutorial.focus) {
+    positionTutorialPopover(null);
+    return;
+  }
+  const focused = Array.from(document.querySelectorAll(tutorial.focus));
+  focused.forEach(el => {
+    el.classList.add('tutorial-focus');
+    tutorialLiftElement(el).classList.add('tutorial-lift');
+  });
+  positionTutorialPopover(focused[0] || null);
+}
+
+function tutorialLiftElement(element) {
+  return element.closest('dialog, .play-panel, .info-card, .card-field, .player-field, .market-cards, .rules-button, .top-game-count, .fullscreen-button') || element;
+}
+
+function positionTutorialPopover(target) {
+  const pop = document.querySelector('.tutorial-popover');
+  if (!pop || !tutorial?.active) return;
+  const margin = 14;
+  const gap = 14;
+  const popWidth = Math.min(520, window.innerWidth - margin * 2);
+  const fallbackLeft = window.innerWidth / 2;
+  if (!target) {
+    pop.classList.remove('above');
+    pop.style.setProperty('--tutorial-popover-left', `${fallbackLeft}px`);
+    pop.style.setProperty('--tutorial-popover-top', `${Math.max(margin, window.innerHeight - pop.offsetHeight - margin)}px`);
+    pop.style.setProperty('--tutorial-arrow-left', '28px');
+    return;
+  }
+  const rect = target.getBoundingClientRect();
+  const popHeight = pop.offsetHeight || 120;
+  const spaceAbove = rect.top - margin;
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  const placeAbove = spaceBelow < popHeight + gap && spaceAbove > spaceBelow;
+  const center = rect.left + rect.width / 2;
+  const half = popWidth / 2;
+  const left = clamp(center, margin + half, window.innerWidth - margin - half);
+  const top = placeAbove
+    ? Math.max(margin, rect.top - popHeight - gap)
+    : Math.min(window.innerHeight - popHeight - margin, rect.bottom + gap);
+  const arrowLeft = clamp(center - (left - half), 22, popWidth - 22);
+  pop.classList.toggle('above', placeAbove);
+  pop.style.setProperty('--tutorial-popover-left', `${left}px`);
+  pop.style.setProperty('--tutorial-popover-top', `${top}px`);
+  pop.style.setProperty('--tutorial-arrow-left', `${arrowLeft}px`);
+}
+
+function applyTutorialControlState() {
+  document.querySelectorAll('[data-tutorial-disabled="true"]').forEach(el => {
+    el.disabled = false;
+    delete el.dataset.tutorialDisabled;
+  });
+  if (!tutorial?.active) return;
+  const controls = document.querySelectorAll('#app button, #app select, #app input');
+  controls.forEach(control => {
+    if (control.disabled || control.closest('.tutorial-popover')) return;
+    const allowed = tutorial.allow && control.closest(tutorial.allow);
+    if (!allowed) {
+      control.disabled = true;
+      control.dataset.tutorialDisabled = 'true';
+    }
+  });
+}
+
+function tutorialAdvanceFrom(eventName, detail = {}) {
+  if (!tutorial?.active) return;
+  const i = tutorial.index;
+  if (i === 3 && eventName === 'rulesOpen') showTutorialStep(4);
+  else if ((i === 4 || i === 5) && eventName === 'rulesClose') showTutorialStep(6);
+  else if (i === 6 && eventName === 'claimOpen') showTutorialStep(7);
+  else if (i === 11 && eventName === 'claim:fullHouse') showTutorialStep(12);
+  else if (i === 15 && eventName === 'special:exchange') showTutorialStep(16);
+  else if (i === 16 && eventName === 'specialDone:exchange') showTutorialStep(17);
+  else if (i === 17 && eventName === 'normal:call') tutorialScriptRound1Cpu();
+  else if (i === 23 && eventName === 'special:peek') showTutorialStep(25);
+  else if (i === 25 && eventName === 'specialDone:peek') showTutorialStep(26);
+  else if (i === 29 && eventName === 'claim:four') showTutorialStep(30);
+  else if (i === 30 && eventName === 'normal:call') tutorialScriptRound2CpuRaise();
+  else if (i === 33 && eventName === 'normal:raise') tutorialScriptAfterHumanRaise();
+  else if (i === 36 && eventName === 'special:random') showTutorialStep(37);
+  else if (i === 39 && eventName === 'specialDone:random') showTutorialStep(40);
+  else if (i === 41 && eventName === 'normal:call') tutorialScriptRound3Cpu();
+  else if (i === 44 && eventName === 'lastFold:continue') showTutorialStep(45);
+}
+
+function tutorialAllowsEvent(target) {
+  if (!tutorial?.active) return true;
+  if (target.closest('.tutorial-popover')) return true;
+  if (!tutorial.allow) return false;
+  return !!target.closest(tutorial.allow);
+}
+
+function tutorialScriptRound1Cpu() {
+  const [, cpu1, cpu2] = state.players;
+  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
+  cpu2.pendingClaim = 'flush';
+  useSpecial(cpu2, 'market', { handIndex: 2, marketIndex: 0 });
+  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'call');
+  showTutorialStep(18);
+  setTimeout(() => showTutorialStep(19), 1500);
+}
+
+function tutorialScriptRound2CpuRaise() {
+  const [, cpu1, cpu2] = state.players;
+  cpu1.pendingClaim = 'royalFlush';
+  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
+  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'raise');
+  showTutorialStep(31);
+  setTimeout(() => showTutorialStep(32), 1000);
+}
+
+function tutorialScriptAfterHumanRaise() {
+  const [, cpu1, cpu2] = state.players;
+  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
+  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'call');
+  showTutorialStep(34);
+}
+
+function tutorialScriptRound3Cpu() {
+  const [, cpu1, cpu2] = state.players;
+  if (state.currentPlayerIndex === 1) normalAction(cpu1, 'call');
+  if (state.currentPlayerIndex === 2) normalAction(cpu2, 'call');
+  showTutorialStep(42);
 }
 
 function renderTopGameCount() {
@@ -1591,6 +1933,7 @@ function renderMarket() {
   state.market.forEach((card, idx) => {
     const selectable = specialMode === 'market' && !state.marketLocks[idx] && isHumanTurnBeforeNormal();
     const node = cardNode(card, { selectable });
+    node.dataset.marketIndex = idx;
     if (card.id === marketRevealCardId) node.classList.add('market-reveal');
     if (humanPreview?.marketCardIds.has(card.id)) node.classList.add('best-card');
     if (state.marketLocks[idx]) {
@@ -1661,6 +2004,8 @@ function renderSeats() {
       } else {
         node = cardBackNode(true);
       }
+      node.dataset.handIndex = idx;
+      node.dataset.cardId = card.id;
       if (p.id === 0 && idx === selectedHandIndex) node.classList.add('selected');
       if (bestHand?.cardIds.has(card.id)) node.classList.add('best-card');
       if (handRevealCardIds.has(card.id)) node.classList.add('hand-reveal');
@@ -2053,7 +2398,11 @@ function clamp(value, min, max) {
 function openClaimBoard() {
   if (!isHumanTurnBeforeNormal() || state.round > 2) return;
   renderClaimBoardOptions();
-  if (!els.claimBoardDialog.open) els.claimBoardDialog.showModal();
+  if (!els.claimBoardDialog.open) {
+    if (tutorial?.active) els.claimBoardDialog.show();
+    else els.claimBoardDialog.showModal();
+  }
+  tutorialAdvanceFrom('claimOpen');
 }
 
 function renderClaimBoardOptions() {
@@ -2649,6 +2998,7 @@ function setSpecialMode(type) {
   selectedMarketIndex = null;
   render();
   renderSpecialDetail(type);
+  tutorialAdvanceFrom(`special:${type}`);
 }
 
 function renderSpecialDetail(type) {
@@ -2683,13 +3033,23 @@ function renderSpecialDetail(type) {
 
 function confirmHumanSpecial() {
   const human = state.players[0];
+  if (tutorial?.active) {
+    if (specialMode === 'exchange' && selectedHandIndex !== 2) return;
+    if (specialMode === 'peek' && Number(document.getElementById('peekTarget')?.value) !== 2) return;
+    if (specialMode === 'random') {
+      const randomCount = document.getElementById('randomCount');
+      if (randomCount) randomCount.value = '1';
+    }
+  }
   let ok = false;
   if (specialMode === 'exchange') ok = useSpecial(human, 'exchange', { handIndex: selectedHandIndex });
   if (specialMode === 'random') ok = useSpecial(human, 'random', { count: Number(document.getElementById('randomCount')?.value || 1) });
   if (specialMode === 'peek') ok = useSpecial(human, 'peek', { targetId: Number(document.getElementById('peekTarget')?.value) });
   if (specialMode === 'market') ok = useSpecial(human, 'market', { handIndex: selectedHandIndex, marketIndex: selectedMarketIndex });
+  const usedType = specialMode;
   if (ok) resetSelections();
   render();
+  if (ok) tutorialAdvanceFrom(`specialDone:${usedType}`);
 }
 
 function escapeHtml(text) {
@@ -2701,7 +3061,14 @@ function escapeHtml(text) {
     .replaceAll("'", '&#039;');
 }
 
+document.addEventListener('click', event => {
+  if (!tutorialAllowsEvent(event.target)) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, true);
 els.startButton.addEventListener('click', startTable);
+els.tutorialButton.addEventListener('click', startTutorial);
 els.chipModeTab.addEventListener('click', () => setSetupMode('chips'));
 els.pointModeTab.addEventListener('click', () => setSetupMode('points'));
 bindSetupAmount(els.startingChips, els.startingChipsSlider);
@@ -2711,16 +3078,26 @@ bindSetupAmount(els.handCardCount, els.handCardCountSlider);
 bindSetupAmount(els.pointsToWin, els.pointsToWinSlider);
 bindSetupAmount(els.foldWinPoints, els.foldWinPointsSlider);
 els.fullscreenButton.addEventListener('click', toggleFullscreen);
-els.rulesButton.addEventListener('click', () => els.rulesDialog.showModal());
-els.closeRules.addEventListener('click', () => els.rulesDialog.close());
+els.rulesButton.addEventListener('click', () => {
+  if (tutorial?.active) els.rulesDialog.show();
+  else els.rulesDialog.showModal();
+  tutorialAdvanceFrom('rulesOpen');
+});
+els.closeRules.addEventListener('click', () => {
+  els.rulesDialog.close();
+  tutorialAdvanceFrom('rulesClose');
+});
 els.closeClaimBoard.addEventListener('click', () => els.claimBoardDialog.close());
 els.claimBoardOptions.addEventListener('click', event => {
   const button = event.target.closest('[data-claim]');
   const human = state?.players[0];
   if (!button || !human || !isHumanTurnBeforeNormal() || state.round > 2) return;
+  if (tutorial?.active && tutorial.index === 11 && button.dataset.claim !== 'fullHouse') return;
+  if (tutorial?.active && tutorial.index === 29 && button.dataset.claim !== 'four') return;
   human.pendingClaim = button.dataset.claim;
   els.claimBoardDialog.close();
   render();
+  tutorialAdvanceFrom(`claim:${button.dataset.claim}`);
 });
 els.cancelQuitButton.addEventListener('click', () => els.quitDialog.close());
 els.confirmQuitButton.addEventListener('click', () => {
