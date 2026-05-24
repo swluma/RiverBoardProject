@@ -1747,7 +1747,7 @@ function tutorialStepConfig(index) {
     26: '[data-card-key="3-8"]',
     27: '[data-card-key="2-10"], [data-card-key="2-11"], .cards-human [data-hand-index="0"], .cards-human [data-hand-index="3"]',
     28: '[data-card-key="2-10"]',
-    35: '[data-special="random"]',
+    35: '.info-top-left .claim-big',
     40: '[data-card-key="2-10"], [data-card-key="2-11"], [data-card-key="2-12"], .cards-human [data-hand-index="0"], .cards-human [data-hand-index="3"]',
     45: null,
     46: '[data-card-key="2-10"], [data-card-key="2-11"], [data-card-key="2-12"], .cards-human [data-hand-index="0"], .cards-human [data-hand-index="3"], .info-human',
@@ -1835,6 +1835,13 @@ function positionTutorialPopover(target) {
   }
   const rect = target.getBoundingClientRect();
   const popHeight = Math.min(pop.offsetHeight || 120, window.innerHeight - margin * 2);
+  if (target.matches('#closeRules, #closeClaimBoard')) {
+    pop.classList.remove('above');
+    pop.style.setProperty('--tutorial-popover-left', `${fallbackLeft}px`);
+    pop.style.setProperty('--tutorial-popover-top', `${window.innerHeight - popHeight - margin}px`);
+    pop.style.setProperty('--tutorial-arrow-left', '28px');
+    return;
+  }
   const spaceAbove = rect.top - margin;
   const spaceBelow = window.innerHeight - rect.bottom - margin;
   let placeAbove = spaceBelow < popHeight + gap && spaceAbove > spaceBelow;
@@ -1863,7 +1870,7 @@ function applyTutorialControlState() {
   if (!tutorial?.active) return;
   const controls = document.querySelectorAll('#app button, #app select, #app input');
   controls.forEach(control => {
-    if (control.disabled || control.closest('.tutorial-popover')) return;
+    if (control.disabled || control.closest('.tutorial-popover') || control.closest('.tutorial-leave-button')) return;
     const allowed = tutorial.allow && control.closest(tutorial.allow);
     if (allowed) {
       control.disabled = false;
@@ -1897,6 +1904,7 @@ function tutorialAdvanceFrom(eventName, detail = {}) {
 function tutorialAllowsEvent(target) {
   if (!tutorial?.active) return true;
   if (target.closest('.tutorial-popover')) return true;
+  if (target.closest('.tutorial-leave-button')) return true;
   if (!tutorial.allow) return false;
   return !!target.closest(tutorial.allow);
 }
@@ -1943,7 +1951,6 @@ function tutorialScriptAfterHumanRaise() {
 
 function tutorialScriptRound3Cpu() {
   const [, cpu1, cpu2] = state.players;
-  showTutorialStep(42);
   runTutorialCpuSequence([
     () => state.currentPlayerIndex === 1 && normalAction(cpu1, 'call'),
     () => state.currentPlayerIndex === 2 && normalAction(cpu2, 'call'),
@@ -2620,6 +2627,13 @@ function renderResults() {
 }
 
 function resultActionButtons() {
+  if (tutorial?.active) {
+    return `
+      <div class="result-actions">
+        <button id="leaveTutorialButton" class="primary-button tutorial-leave-button" type="button">Leave</button>
+      </div>
+    `;
+  }
   const nextLabel = isMatchOver() ? 'Final Results' : 'Next Game';
   return `
     <div class="result-actions">
@@ -2630,8 +2644,22 @@ function resultActionButtons() {
 }
 
 function bindResultActions() {
+  document.getElementById('leaveTutorialButton')?.addEventListener('click', leaveTutorial);
   document.getElementById('nextGameButton')?.addEventListener('click', startNewGame);
   document.getElementById('quitGameButton')?.addEventListener('click', openQuitDialog);
+}
+
+function leaveTutorial() {
+  clearCpuTimers();
+  clearShowdownAnimation();
+  resetSelections();
+  clearTutorialFocus();
+  tutorial = null;
+  document.body.classList.remove('tutorial-mode');
+  applyTutorialControlState();
+  els.gameScreen.classList.add('hidden');
+  els.setupScreen.classList.remove('hidden');
+  els.resultPanel.classList.add('hidden');
 }
 
 function renderFinalResults() {
