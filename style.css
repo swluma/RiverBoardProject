@@ -1186,12 +1186,39 @@ select, input {
   position: relative;
 }
 .player-field .avatar {
+  position: relative;
   width: 42px;
   height: 42px;
   font-size: 1.28rem;
   border-width: 2px;
   border-color: var(--player-color);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--player-color) 40%, transparent), 0 8px 22px rgba(0,0,0,0.34);
+}
+.turn-order-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  z-index: 4;
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid rgba(8, 13, 19, 0.96);
+  background: linear-gradient(180deg, #fff6b8 0%, #ffc94a 100%);
+  color: #211405;
+  box-shadow: 0 5px 12px rgba(0,0,0,0.42), 0 0 0 1px rgba(255,255,255,0.38) inset;
+  font-size: 0.72rem;
+  font-weight: 1000;
+  line-height: 1;
+  animation: turnOrderPop 620ms cubic-bezier(.18,.9,.25,1.28) both;
+  animation-delay: var(--turn-order-delay, 0ms);
+}
+@keyframes turnOrderPop {
+  0% { opacity: 0; transform: translate(10px, 8px) scale(0.2) rotate(-18deg); }
+  45% { opacity: 1; transform: translate(0, 0) scale(1.75) rotate(7deg); }
+  72% { opacity: 1; transform: translate(0, 0) scale(0.92) rotate(-3deg); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1) rotate(0); }
 }
 .player-field.current .avatar {
   border-color: var(--accent);

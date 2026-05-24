@@ -1620,12 +1620,13 @@ function renderSeats() {
     const seat = document.createElement('div');
     seat.className = `player-field field-${slot}`;
     seat.style.setProperty('--player-color', p.color);
+    seat.style.setProperty('--turn-order-delay', `${Math.max(0, turnOrderPosition(p) - 1) * 180}ms`);
     if (state.phase === 'round' && state.players[state.currentPlayerIndex] === p) seat.classList.add('current');
     if (p.out) seat.classList.add('out');
     if (p.out || p.folded || p.lastFolded) seat.classList.add('inactive');
     seat.innerHTML = `
       <div class="player-identity">
-        <div class="avatar">${escapeHtml(p.icon)}</div>
+        <div class="avatar">${escapeHtml(p.icon)}${turnOrderBadgeMarkup(p)}</div>
         ${showdownRankMarkup(p.id)}
         ${showdownScorePanelMarkup(p.id)}
         ${contributionChipStacks(p)}
@@ -1695,6 +1696,25 @@ function renderSeats() {
   }
   cpuNormalActionPulseIds.clear();
   clearQueuedCardAnimations();
+}
+
+function turnOrderPosition(player) {
+  if (!state || player.out) return 0;
+  let position = 0;
+  for (let offset = 0; offset < state.players.length; offset++) {
+    const candidate = state.players[(state.turnOrderStart + offset) % state.players.length];
+    if (candidate.out) continue;
+    position += 1;
+    if (candidate === player) return position;
+  }
+  return 0;
+}
+
+function turnOrderBadgeMarkup(player) {
+  if (state.phase !== 'dealing' || player.out) return '';
+  const position = turnOrderPosition(player);
+  if (!position) return '';
+  return `<span class="turn-order-badge" aria-label="Turn order ${position}">${position}</span>`;
 }
 
 function getCpuSeatSlots(cpuCount) {
