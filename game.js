@@ -396,23 +396,15 @@ function startTable() {
 
 function startTutorial() {
   clearCpuTimers();
-  setSetupMode('chips');
-  els.cpuCount.value = '2';
-  els.startingChips.value = '100';
-  els.startingChipsSlider.value = '100';
-  els.baseBet.value = '5';
-  els.baseBetSlider.value = '5';
-  els.maxGames.value = '1';
-  els.maxGamesSlider.value = '1';
-  els.handCardCount.value = '5';
-  els.handCardCountSlider.value = '5';
-  syncSetupAmount(els.startingChips, els.startingChipsSlider);
-  syncSetupAmount(els.baseBet, els.baseBetSlider);
-  syncSetupAmount(els.maxGames, els.maxGamesSlider);
-  syncSetupAmount(els.handCardCount, els.handCardCountSlider);
+  const setupMode = selectedMode;
+  selectedMode = 'chips';
   tutorial = { active: true, index: 0, allow: null, focus: null, cpuRound2Raised: false };
   state = createInitialState(2, 100, 5);
+  selectedMode = setupMode;
   state.tutorial = true;
+  state.mode = 'chips';
+  state.maxGames = 1;
+  state.handCardCount = 5;
   els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   ensureTutorialUi();
