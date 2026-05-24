@@ -894,10 +894,13 @@ function applyLastFoldRefunds(results) {
 }
 
 function playHumanShowdownResultSound(results) {
-  if (isPointMode()) return;
   const human = results.find(result => result.player.id === 0);
   const candidates = results.filter(result => result.candidate);
-  if (!human || candidates.length === 0) return;
+  if (!human) return;
+  if (candidates.length === 0) {
+    playSound('failure');
+    return;
+  }
   const winner = candidates.slice().sort(compareResults)[0];
   const humanWonPot = human.candidate && compareResults(human, winner) === 0;
   playSound(humanWonPot ? 'win' : 'failure');
