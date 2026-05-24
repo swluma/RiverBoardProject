@@ -2084,7 +2084,7 @@ function renderSeats() {
         ${contributionChipStacks(p)}
         ${p.out ? '<div class="normal-action-field out-badge">OUT</div>' : p.normalAction ? `<div class="normal-action-field${cpuNormalActionPulseIds.has(p.id) ? ' action-pop' : ''}">${escapeHtml(p.normalAction)}</div>` : ''}
         <div class="seat-name">${escapeHtml(p.name)}</div>
-        <div class="seat-chip">${p.chips} chips</div>
+        <div class="seat-chip">${chipCountLabel(p.chips)}</div>
       </div>
     `;
     const hand = document.createElement('div');
@@ -2172,6 +2172,18 @@ function turnOrderBadgeMarkup(player) {
   return `<span class="turn-order-badge" aria-label="Turn order ${position}">${position}</span>`;
 }
 
+function chipCountLabel(count) {
+  return `💰 ${count}`;
+}
+
+function betCountLabel(count) {
+  return `🪙 ${count}`;
+}
+
+function chipDeltaLabel(count) {
+  return `💰 ${count > 0 ? '+' : ''}${count}`;
+}
+
 function getCpuSeatSlots(cpuCount) {
   if (cpuCount === 1) return ['top'];
   if (cpuCount === 2) return ['top-left', 'top-right'];
@@ -2219,11 +2231,11 @@ function renderInfoPanels() {
       <div class="info-player">
         <span class="info-player-stack">
           <span class="info-player-icon">${escapeHtml(p.icon)}</span>
-          <span class="info-bet-count">Bet ${p.totalContrib}</span>
+          <span class="info-bet-count">${betCountLabel(p.totalContrib)}</span>
         </span>
         <span class="info-player-meta">
           <span class="info-player-name">${escapeHtml(p.name)}</span>
-          ${isPointMode() ? pointMeterMarkup(p.points) : `<span class="info-chip-count">${p.chips} chips</span>`}
+          ${isPointMode() ? pointMeterMarkup(p.points) : `<span class="info-chip-count">${chipCountLabel(p.chips)}</span>`}
         </span>
       </div>
       ${claimEditable
@@ -2716,15 +2728,15 @@ function renderFinalResults() {
         <td><span class="final-player">${escapeHtml(player.icon)} ${escapeHtml(player.name)}</span></td>
         ${pointMode
           ? `<td><strong>${formatPointValue(player.points)}</strong></td><td>${pointMeterMarkup(player.points)}</td><td>${player.points >= state.pointsToWin ? 'Reached' : 'Active'}</td>`
-          : `<td><strong>${player.chips}</strong></td><td>${formatChipDelta(player.chips - state.startingChips)}</td><td>${player.wins}</td><td>${player.tiedWins}</td><td>${player.out || player.chips <= 0 ? 'Out' : 'Active'}</td>`}
+          : `<td><strong>${chipCountLabel(player.chips)}</strong></td><td>${formatChipDelta(player.chips - state.startingChips)}</td><td>${player.wins}</td><td>${player.tiedWins}</td><td>${player.out || player.chips <= 0 ? 'Out' : 'Active'}</td>`}
       </tr>
     `).join('');
   const summaryMetric = pointMode
     ? `<span>Target <strong>${formatPointValue(state.pointsToWin)}</strong></span>`
-    : `<span>Total chips <strong>${totalChips}</strong></span>`;
+    : `<span>Total <strong>${chipCountLabel(totalChips)}</strong></span>`;
   const tableHeader = pointMode
     ? '<tr><th>Rank</th><th>Player</th><th>Points</th><th>Progress</th><th>Status</th></tr>'
-    : '<tr><th>Rank</th><th>Player</th><th>Final chips</th><th>Chip +/-</th><th>Wins</th><th>Ties</th><th>Status</th></tr>';
+    : '<tr><th>Rank</th><th>Player</th><th>Final 💰</th><th>💰 +/-</th><th>Wins</th><th>Ties</th><th>Status</th></tr>';
   els.finalResultScreen.innerHTML = `
     <div class="final-result-shell">
       <h1>Final Results</h1>
@@ -2742,7 +2754,7 @@ function renderFinalResults() {
 }
 
 function formatChipDelta(delta) {
-  return `${delta > 0 ? '+' : ''}${delta}`;
+  return chipDeltaLabel(delta);
 }
 
 function openQuitDialog() {
@@ -2793,7 +2805,7 @@ function showShowdownChipDeltas(chipDeltas) {
     if (!center) continue;
     const chipDelta = document.createElement('span');
     chipDelta.className = `showdown-chip-delta ${entry.delta < 0 ? 'loss' : 'gain'}`;
-    chipDelta.textContent = `${entry.delta > 0 ? '+' : ''}${entry.delta} chips`;
+    chipDelta.textContent = chipDeltaLabel(entry.delta);
     chipDelta.style.left = `${center.x}px`;
     chipDelta.style.top = `${center.y}px`;
     els.tableArea.appendChild(chipDelta);
