@@ -2554,7 +2554,6 @@ function playSound(type, delay = 0) {
 function animateDiscardDrop() {
   const pile = document.querySelector('.discard-pile');
   if (!pile) return;
-  playSound('card');
   const angle = Math.random() * Math.PI * 2;
   const distance = 120 + Math.random() * 110;
   const card = document.createElement('div');
