@@ -4113,7 +4113,7 @@ document.addEventListener('click', event => {
 }, true);
 els.startButton.addEventListener('click', startTable);
 els.roomButton?.addEventListener('click', openLobbyDialog);
-els.closeLobby?.addEventListener('pointerdown', closeLobbyDialog);
+els.closeLobby?.addEventListener('pointerup', closeLobbyDialog);
 els.closeLobby?.addEventListener('click', closeLobbyDialog);
 els.copyLobbyCode?.addEventListener('click', copyLobbyCode);
 els.lobbyStartButton?.addEventListener('click', requestRoomStart);
