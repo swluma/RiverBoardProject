@@ -101,6 +101,12 @@ select, input {
   place-items: center;
   position: relative;
 }
+.lobby-screen {
+  width: 100%; height: 100%;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
 .setup-table {
   position: absolute;
   width: min(76vw, 700px);
@@ -132,6 +138,58 @@ select, input {
   gap: 14px;
 }
 .setup-card h1 { margin: 0; font-size: clamp(1.6rem, 4vw, 2.5rem); }
+.lobby-card {
+  position: relative;
+  width: min(420px, calc(100vw - 24px));
+  padding: 20px;
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+}
+.lobby-card h1 {
+  margin: 0;
+  font-size: 2.4rem;
+  letter-spacing: 0.08em;
+}
+.lobby-players {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.lobby-players li {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 80px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  background: rgba(8, 13, 21, 0.58);
+}
+.lobby-players span,
+.lobby-players em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+.lobby-players strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lobby-actions {
+  min-height: 58px;
+  position: relative;
+}
+.lobby-start {
+  position: static;
+  transform: none;
+  width: 100%;
+  font-size: 1rem;
+  padding: 14px 18px;
+}
 .tutorial-start-button {
   position: absolute;
   top: 14px;

@@ -2,7 +2,7 @@
   "title": "Role Board Poker",
   "description": "A poker-inspired role board card game with chips, points, CPU opponents, special actions, and a tutorial.",
   "icon": "./icon.png",
-  "maxPlayers": 4,
+  "maxPlayers": 2,
   "supportsLocal": true,
-  "supportsRooms": false
+  "supportsRooms": true
 }

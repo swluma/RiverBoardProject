@@ -87,6 +87,20 @@
       </div>
     </section>
 
+    <section id="lobbyScreen" class="lobby-screen hidden">
+      <div class="setup-table"></div>
+      <div class="lobby-card floating-panel">
+        <span class="mini-label">Room</span>
+        <h1 id="lobbyRoomCode">----</h1>
+        <p id="lobbyStatus" class="setup-subtitle">Connecting</p>
+        <ul id="lobbyPlayers" class="lobby-players"></ul>
+        <div class="lobby-actions">
+          <button id="lobbyReadyButton" class="primary-button" type="button">Mark Ready</button>
+          <button id="lobbyStartButton" class="center-start lobby-start" type="button">Start Game</button>
+        </div>
+      </div>
+    </section>
+
     <main id="gameScreen" class="game-screen hidden">
       <section id="tableArea" class="table-area">
         <div class="oval-table" aria-label="Poker table">

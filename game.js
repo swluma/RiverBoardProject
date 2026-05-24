@@ -99,6 +99,40 @@ const SHOWDOWN_FAST_INTERVAL = 250;
 const SHOWDOWN_CARD_FLIP_TIME = 540;
 const SHOWDOWN_POINT_TIME = 500;
 const SHOWDOWN_RANK_TIME = 650;
+const HUB_GAME_ID = 'role_board_poker';
+const HUB_ROOM_EVENTS = Object.freeze({
+  JOIN_ROOM: 'join_room',
+  LEAVE_ROOM: 'leave_room',
+  PLAYER_READY: 'player_ready',
+  START_GAME: 'start_game',
+  GAME_ACTION: 'game_action',
+  SYNC_REQUEST: 'sync_request',
+  HEARTBEAT: 'heartbeat',
+});
+const HUB_SERVER_EVENTS = Object.freeze({
+  ROOM_JOINED: 'room_joined',
+  ROOM_STATE: 'room_state',
+  PLAYER_JOINED: 'player_joined',
+  PLAYER_LEFT: 'player_left',
+  PLAYER_READY: 'player_ready',
+  GAME_STARTED: 'game_started',
+  GAME_ACTION: 'game_action',
+  SYNC_STATE: 'sync_state',
+  ERROR: 'error',
+  ROOM_CLOSED: 'room_closed',
+});
+const HUB_ACTION_TYPES = Object.freeze({
+  START_STATE: 'role_poker_start_state',
+  SNAPSHOT: 'role_poker_snapshot',
+  REQUEST_SYNC: 'role_poker_sync_request',
+  SETUP: 'role_poker_setup',
+  CLAIM: 'role_poker_claim',
+  SPECIAL: 'role_poker_special',
+  NORMAL: 'role_poker_normal',
+  LAST_FOLD: 'role_poker_last_fold',
+  NEXT_GAME: 'role_poker_next_game',
+  QUIT: 'role_poker_quit',
+});
 
 const TUTORIAL_TEXTS = [
   'In Showdown, the player with the highest point total wins every chip in the pot.',
@@ -216,10 +250,17 @@ const els = {
   quitDialog: document.getElementById('quitDialog'),
   cancelQuitButton: document.getElementById('cancelQuitButton'),
   confirmQuitButton: document.getElementById('confirmQuitButton'),
+  lobbyScreen: document.getElementById('lobbyScreen'),
+  lobbyRoomCode: document.getElementById('lobbyRoomCode'),
+  lobbyStatus: document.getElementById('lobbyStatus'),
+  lobbyPlayers: document.getElementById('lobbyPlayers'),
+  lobbyReadyButton: document.getElementById('lobbyReadyButton'),
+  lobbyStartButton: document.getElementById('lobbyStartButton'),
 };
 
 let state = null;
 let selectedMode = 'chips';
+let localPlayerId = 0;
 let selectedIcon = '🦉';
 let selectedHandIndex = null;
 let selectedMarketIndex = null;
@@ -254,6 +295,73 @@ const humanPanelPositions = {
 let activePanelDrag = null;
 let activePlayPanelResize = null;
 let customPlayPanelHeight = null;
+
+function safeStorageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+}
+
+function sanitizeHubRoomCode(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+}
+
+function sanitizeHubPlayerName(value) {
+  return String(value || '').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24);
+}
+
+function createStableHubPlayerId(mode, roomCode) {
+  const key = `${HUB_GAME_ID}:player-id:${mode || 'local'}:${roomCode || 'local'}`;
+  const existing = safeStorageGet(key);
+  if (existing) return existing;
+  const generated = `${HUB_GAME_ID}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+  safeStorageSet(key, generated);
+  return generated;
+}
+
+function resolveHubSession() {
+  const params = new URLSearchParams(window.location.search || '');
+  const requestedMode = String(params.get('mode') || 'local').toLowerCase();
+  const mode = ['local', 'host', 'join'].includes(requestedMode) ? requestedMode : 'local';
+  const roomCode = sanitizeHubRoomCode(params.get('room'));
+  const playerName = sanitizeHubPlayerName(params.get('name')) || (mode === 'join' ? 'Player 2' : 'Player 1');
+  const wsUrl = String(params.get('ws') || '').trim();
+  const isRoomPlay = mode === 'host' || mode === 'join';
+  return {
+    fromHub: params.get('hub') === '1' || params.has('mode') || params.has('room') || params.has('ws'),
+    mode,
+    isRoomPlay,
+    isHost: mode === 'host',
+    roomCode: isRoomPlay ? roomCode : '',
+    playerName,
+    playerId: createStableHubPlayerId(mode, roomCode),
+    wsUrl,
+    valid: !isRoomPlay || (!!roomCode && !!wsUrl && typeof WebSocket === 'function'),
+  };
+}
+
+const hub = {
+  session: resolveHubSession(),
+  socket: null,
+  connected: false,
+  joined: false,
+  room: null,
+  started: false,
+  ready: false,
+  actionCounter: 1,
+  processedActions: new Set(),
+  heartbeatTimer: null,
+  applyingRemote: false,
+  lastError: '',
+};
 
 function makePlayer(id, name, icon, isCpu, chips, color) {
   return {
@@ -302,6 +410,22 @@ function createInitialState(cpuCount, startingChips, baseBet) {
       PLAYER_COLORS[i + 1] || '#d6e2f5',
     ));
   }
+  if (hub.session.isRoomPlay && hub.room?.players?.length) {
+    players.length = 0;
+    orderedHubPlayers().forEach((roomPlayer, index) => {
+      const player = makePlayer(
+        index,
+        sanitizeHubPlayerName(roomPlayer.name) || `Player ${index + 1}`,
+        index === 0 ? selectedIcon : (CPU_ICONS[index - 1] || 'CPU'),
+        false,
+        startingChips,
+        PLAYER_COLORS[index] || '#d6e2f5',
+      );
+      player.hubPlayerId = roomPlayer.id;
+      players.push(player);
+    });
+    localPlayerId = hubSeatForPlayerId(hub.session.playerId);
+  }
   return {
     players,
     baseBet,
@@ -328,7 +452,194 @@ function createInitialState(cpuCount, startingChips, baseBet) {
     publicActionText: 'Public actions appear here.',
     finalResults: [],
     showdownPayout: null,
+    version: 0,
   };
+}
+
+function orderedHubPlayers(room = hub.room) {
+  const players = Array.isArray(room?.players) ? room.players.slice() : [];
+  const hostId = room?.hostId || players[0]?.id || null;
+  return players.sort((a, b) => {
+    if (a.id === hostId) return -1;
+    if (b.id === hostId) return 1;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+}
+
+function hubSeatForPlayerId(playerId) {
+  const index = orderedHubPlayers().findIndex(player => player.id === playerId);
+  return index >= 0 ? index : (hub.session.isHost ? 0 : 1);
+}
+
+function localPlayer() {
+  if (!state) return null;
+  return state.players.find(player => player.id === localPlayerId) || state.players[0] || null;
+}
+
+function isLocalPlayer(player) {
+  return !!player && player.id === localPlayerId;
+}
+
+function remoteSeatPosition(player) {
+  if (!state?.players?.length || !player) return 1;
+  const remotes = state.players.filter(candidate => candidate.id !== localPlayerId);
+  return Math.max(1, remotes.findIndex(candidate => candidate.id === player.id) + 1);
+}
+
+function isRoomHost() {
+  return hub.session.isRoomPlay && hub.session.isHost;
+}
+
+function hubSend(type, payload = {}) {
+  if (!hub.socket || hub.socket.readyState !== WebSocket.OPEN) return false;
+  hub.socket.send(JSON.stringify({ type, payload }));
+  return true;
+}
+
+function makeHubAction(type, payload = {}) {
+  return {
+    id: `${HUB_GAME_ID}-${Date.now().toString(36)}-${hub.actionCounter++}`,
+    type,
+    playerId: hub.session.playerId,
+    seatId: localPlayerId,
+    version: state?.version || 0,
+    turn: state?.currentPlayerIndex ?? null,
+    round: state?.round ?? 0,
+    payload,
+  };
+}
+
+function sendHubAction(type, payload = {}) {
+  if (!hub.session.isRoomPlay || !hub.connected) return false;
+  return hubSend(HUB_ROOM_EVENTS.GAME_ACTION, {
+    roomCode: hub.session.roomCode,
+    action: makeHubAction(type, payload),
+  });
+}
+
+function bumpVersion() {
+  if (state) state.version = (Number(state.version) || 0) + 1;
+}
+
+function cloneGameState() {
+  return state ? JSON.parse(JSON.stringify(state)) : null;
+}
+
+function cloneGameStateForGuests() {
+  const snapshot = cloneGameState();
+  if (!snapshot) return null;
+  snapshot.stock = snapshot.stock.map((_, index) => ({ id: `stock-${index}`, hidden: true }));
+  snapshot.reservedMarket = snapshot.reservedMarket.map((_, index) => ({ id: `reserved-${index}`, hidden: true }));
+  snapshot.players = snapshot.players.map(player => {
+    if (player.id === 1 || snapshot.phase === 'result' || snapshot.phase === 'showdown' || snapshot.phase === 'final') return player;
+    const publicIds = new Set(player.publicHandCardIds || []);
+    return {
+      ...player,
+      hand: player.hand.map(card => publicIds.has(card.id) ? card : { id: card.id, hidden: true }),
+    };
+  });
+  if (Array.isArray(snapshot.finalResults) && snapshot.phase !== 'result' && snapshot.phase !== 'showdown' && snapshot.phase !== 'final') {
+    snapshot.finalResults = [];
+  }
+  return snapshot;
+}
+
+function publishSnapshot(reason = 'snapshot') {
+  if (!isRoomHost() || !hub.connected || !state || hub.applyingRemote) return;
+  bumpVersion();
+  sendHubAction(HUB_ACTION_TYPES.SNAPSHOT, {
+    reason,
+    state: cloneGameStateForGuests(),
+  });
+}
+
+function applySnapshot(snapshot) {
+  if (!snapshot?.state) return;
+  hub.applyingRemote = true;
+  clearCpuTimers(true);
+  clearShowdownAnimation();
+  clearTimeout(openingDealTimer);
+  clearTimeout(roundTransitionTimer);
+  clearInterval(lastFoldInterval);
+  state = snapshot.state;
+  localPlayerId = hubSeatForPlayerId(hub.session.playerId);
+  resetSelections();
+  els.setupScreen.classList.add('hidden');
+  els.lobbyScreen?.classList.add('hidden');
+  els.gameScreen.classList.remove('hidden');
+  render();
+  hub.applyingRemote = false;
+}
+
+function validateSeatAction(action, player) {
+  if (!action || !player) return false;
+  if (hubSeatForPlayerId(action.playerId) !== player.id) return false;
+  if (player.hubPlayerId && player.hubPlayerId !== action.playerId) return false;
+  return true;
+}
+
+function applyAuthoritativeAction(action) {
+  if (!isRoomHost() || !state || hub.processedActions.has(action?.id)) return;
+  hub.processedActions.add(action.id);
+  const player = state.players[hubSeatForPlayerId(action.playerId)];
+  if (!validateSeatAction(action, player)) return;
+  let changed = false;
+  if (action.type === HUB_ACTION_TYPES.CLAIM) {
+    changed = applyClaimAction(player, action.payload?.claim);
+  } else if (action.type === HUB_ACTION_TYPES.SPECIAL) {
+    changed = applySpecialAction(player, action.payload || {});
+  } else if (action.type === HUB_ACTION_TYPES.NORMAL) {
+    changed = applyNormalAction(player, action.payload?.action);
+  } else if (action.type === HUB_ACTION_TYPES.LAST_FOLD) {
+    changed = applyLastFoldAction(player, action.payload?.choice);
+  } else if (action.type === HUB_ACTION_TYPES.NEXT_GAME && state.phase === 'result') {
+    startNewGame();
+    publishSnapshot('next_game');
+    return;
+  } else if (action.type === HUB_ACTION_TYPES.QUIT) {
+    endGame('Game ended by the host.');
+    changed = true;
+  } else if (action.type === HUB_ACTION_TYPES.REQUEST_SYNC) {
+    publishSnapshot('sync_request');
+    return;
+  }
+  if (changed) publishSnapshot(action.type);
+}
+
+function applyClaimAction(player, claim) {
+  if (!state || state.phase !== 'round' || state.round > 2) return false;
+  if (state.players[state.currentPlayerIndex] !== player || player.actedThisRound) return false;
+  if (!CLAIM_BY_KEY[claim]) return false;
+  player.pendingClaim = claim;
+  pulse(`${player.name} updated their Role Board.`);
+  render();
+  return true;
+}
+
+function applySpecialAction(player, payload) {
+  if (!state || state.phase !== 'round' || state.players[state.currentPlayerIndex] !== player || player.actedThisRound) return false;
+  const type = payload?.type;
+  const specialPayload = payload?.payload || {};
+  const ok = useSpecial(player, type, specialPayload);
+  if (ok) {
+    resetSelections();
+    render();
+  }
+  return ok;
+}
+
+function applyNormalAction(player, action) {
+  if (!['call', 'raise', 'fold'].includes(action)) return false;
+  const before = state?.version || 0;
+  normalAction(player, action);
+  return !!state && (state.version || 0) === before;
+}
+
+function applyLastFoldAction(player, choice) {
+  if (!['continue', 'lastFold'].includes(choice)) return false;
+  const before = state?.version || 0;
+  chooseLastFold(player, choice);
+  return !!state && (state.version || 0) === before;
 }
 
 function makeDeck() {
@@ -377,7 +688,186 @@ function drawFromStock() {
   return state.stock.pop() || null;
 }
 
+function connectHubRoom() {
+  if (!hub.session.isRoomPlay) return;
+  els.playerName.value = hub.session.playerName;
+  localPlayerId = hub.session.isHost ? 0 : 1;
+  showLobby();
+  if (!hub.session.valid) {
+    hub.lastError = 'Missing room or WebSocket URL.';
+    renderLobby();
+    return;
+  }
+  hub.socket = new WebSocket(hub.session.wsUrl);
+  hub.socket.addEventListener('open', () => {
+    hub.connected = true;
+    hubSend(HUB_ROOM_EVENTS.JOIN_ROOM, {
+      roomCode: hub.session.roomCode,
+      playerName: hub.session.playerName,
+      gameId: HUB_GAME_ID,
+      mode: hub.session.mode,
+      player: { id: hub.session.playerId, name: hub.session.playerName },
+    });
+    hub.heartbeatTimer = setInterval(() => hubSend(HUB_ROOM_EVENTS.HEARTBEAT, { roomCode: hub.session.roomCode }), 15000);
+    renderLobby();
+  });
+  hub.socket.addEventListener('message', event => {
+    let message = null;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    handleHubMessage(message.type, message.payload || {});
+  });
+  hub.socket.addEventListener('close', () => {
+    hub.connected = false;
+    clearInterval(hub.heartbeatTimer);
+    renderLobby();
+  });
+  hub.socket.addEventListener('error', () => {
+    hub.lastError = 'WebSocket connection failed.';
+    renderLobby();
+  });
+}
+
+function handleHubMessage(type, payload) {
+  if (type === HUB_SERVER_EVENTS.ROOM_JOINED || type === HUB_SERVER_EVENTS.ROOM_STATE) {
+    hub.joined = true;
+    hub.room = payload.room || hub.room;
+    hub.ready = !!hub.room?.players?.find(player => player.id === hub.session.playerId)?.ready;
+    localPlayerId = hubSeatForPlayerId(hub.session.playerId);
+    renderLobby();
+    if (!hub.session.isHost) {
+      hubSend(HUB_ROOM_EVENTS.SYNC_REQUEST, { roomCode: hub.session.roomCode });
+      sendHubAction(HUB_ACTION_TYPES.REQUEST_SYNC);
+    }
+    return;
+  }
+  if (type === HUB_SERVER_EVENTS.PLAYER_JOINED || type === HUB_SERVER_EVENTS.PLAYER_LEFT || type === HUB_SERVER_EVENTS.PLAYER_READY) {
+    if (hub.session.isHost && state) window.setTimeout(() => publishSnapshot(type), 60);
+    renderLobby();
+    return;
+  }
+  if (type === HUB_SERVER_EVENTS.GAME_STARTED) {
+    hub.started = true;
+    if (hub.session.isHost && !state) startRoomGameAsHost();
+    renderLobby();
+    return;
+  }
+  if (type === HUB_SERVER_EVENTS.GAME_ACTION) {
+    const action = payload.action;
+    if (!action || hub.processedActions.has(action.id)) return;
+    if (action.type === HUB_ACTION_TYPES.SNAPSHOT || action.type === HUB_ACTION_TYPES.START_STATE) {
+      hub.processedActions.add(action.id);
+      if (!hub.session.isHost) applySnapshot(action.payload);
+      return;
+    }
+    if (hub.session.isHost) applyAuthoritativeAction(action);
+    return;
+  }
+  if (type === HUB_SERVER_EVENTS.SYNC_STATE) {
+    hub.room = payload.room || hub.room;
+    const action = payload.lastAction;
+    if (action?.type === HUB_ACTION_TYPES.SNAPSHOT && !hub.session.isHost) applySnapshot(action.payload);
+    renderLobby();
+    return;
+  }
+  if (type === HUB_SERVER_EVENTS.ERROR) {
+    hub.lastError = payload.message || 'Room error.';
+    renderLobby();
+    return;
+  }
+  if (type === HUB_SERVER_EVENTS.ROOM_CLOSED) {
+    hub.lastError = payload.message || 'Room closed.';
+    hub.connected = false;
+    hub.started = false;
+    showLobby();
+    renderLobby();
+  }
+}
+
+function showLobby() {
+  els.setupScreen.classList.add('hidden');
+  els.gameScreen.classList.add('hidden');
+  els.lobbyScreen?.classList.remove('hidden');
+  renderLobby();
+}
+
+function renderLobby() {
+  if (!hub.session.isRoomPlay || !els.lobbyScreen) return;
+  const room = hub.room;
+  const players = orderedHubPlayers(room);
+  const readyCount = players.filter(player => player.ready).length;
+  els.lobbyRoomCode.textContent = hub.session.roomCode || '----';
+  els.lobbyStatus.textContent = hub.lastError || `${hub.connected ? 'Connected' : 'Connecting'} · ${readyCount}/${Math.max(2, players.length)} ready`;
+  els.lobbyPlayers.innerHTML = players.length
+    ? players.map((player, index) => `
+      <li>
+        <span>${index === 0 ? 'Host' : 'Guest'}</span>
+        <strong>${escapeHtml(player.name || `Player ${index + 1}`)}</strong>
+        <em>${player.ready ? 'Ready' : 'Not ready'}</em>
+      </li>
+    `).join('')
+    : '<li><span>Waiting</span><strong>No players connected</strong><em>-</em></li>';
+  const canStart = hub.session.isHost && hub.connected && players.length >= 2 && players.every(player => player.ready);
+  els.lobbyStartButton.disabled = !canStart;
+  els.lobbyStartButton.classList.toggle('hidden', !hub.session.isHost);
+  els.lobbyReadyButton.classList.toggle('hidden', hub.session.isHost);
+  els.lobbyReadyButton.textContent = hub.ready ? 'Ready' : 'Mark Ready';
+}
+
+function startRoomGameAsHost() {
+  syncSetupAmount(els.startingChips, els.startingChipsSlider);
+  syncSetupAmount(els.baseBet, els.baseBetSlider);
+  syncSetupAmount(els.maxGames, els.maxGamesSlider);
+  syncSetupAmount(els.handCardCount, els.handCardCountSlider);
+  syncSetupAmount(els.pointsToWin, els.pointsToWinSlider);
+  syncSetupAmount(els.foldWinPoints, els.foldWinPointsSlider);
+  state = createInitialState(0, Number(els.startingChips.value), Number(els.baseBet.value));
+  els.lobbyScreen?.classList.add('hidden');
+  els.gameScreen.classList.remove('hidden');
+  startNewGame();
+  publishSnapshot(HUB_ACTION_TYPES.START_STATE);
+}
+
+function requestRoomStart() {
+  if (!hub.session.isHost) return;
+  sendHubAction(HUB_ACTION_TYPES.SETUP, currentSetupPayload());
+  hubSend(HUB_ROOM_EVENTS.START_GAME, {
+    roomCode: hub.session.roomCode,
+    seed: Date.now(),
+  });
+}
+
+function toggleReady() {
+  if (hub.session.isHost) return;
+  hub.ready = !hub.ready;
+  hubSend(HUB_ROOM_EVENTS.PLAYER_READY, {
+    roomCode: hub.session.roomCode,
+    playerId: hub.session.playerId,
+    ready: hub.ready,
+  });
+  renderLobby();
+}
+
+function currentSetupPayload() {
+  return {
+    selectedMode,
+    startingChips: Number(els.startingChips.value),
+    baseBet: Number(els.baseBet.value),
+    maxGames: Number(els.maxGames.value),
+    handCardCount: Number(els.handCardCount.value),
+    pointsToWin: Number(els.pointsToWin.value),
+    foldWinPoints: Number(els.foldWinPoints.value),
+  };
+}
+
 function startTable() {
+  if (hub.session.isRoomPlay) {
+    requestRoomStart();
+    return;
+  }
   clearCpuTimers();
   tutorial = null;
   document.body.classList.remove('tutorial-mode');
@@ -480,6 +970,7 @@ function startNewGame() {
     if (!state || state.phase !== 'dealing') return;
     state.phase = 'round';
     render();
+    publishSnapshot('dealing_complete');
     maybeCpuTurn();
   }, dealIndex * 115 + 520);
   for (let i = 0; i < dealIndex; i++) playSound('card', i * 115);
@@ -607,6 +1098,7 @@ function beginRoundTransition(round) {
     els.roundBanner.classList.remove('show');
     prepareRound(round);
     render();
+    publishSnapshot(`round_${round}`);
     maybeCpuTurn();
   }, 1000);
 }
@@ -625,6 +1117,7 @@ function awardEarlyWin() {
   state.finalResults = [{ player: winner, early: true }];
   pulse(`${winner.name} wins because everyone else folded.`);
   render();
+  publishSnapshot('early_win');
 }
 
 function beginLastFold() {
@@ -756,6 +1249,7 @@ function resolveShowdown() {
   if (state.showdownPayout) state.showdownPayout.chipDeltas = chipDeltas;
   state.phase = 'result';
   state.finalResults = results;
+  publishSnapshot('showdown_resolved');
   startShowdownAnimation(results);
 }
 
@@ -832,6 +1326,7 @@ async function playShowdownAnimation(token, results) {
   state.phase = 'result';
   showdownAnimation = null;
   render();
+  publishSnapshot('showdown_complete');
 }
 
 function waitForTutorialShowdownPause(index, token) {
@@ -892,7 +1387,7 @@ function applyLastFoldRefunds(results) {
 }
 
 function playHumanShowdownResultSound(results) {
-  const human = results.find(result => result.player.id === 0);
+  const human = results.find(result => isLocalPlayer(result.player));
   const candidates = results.filter(result => result.candidate);
   if (!human) return;
   if (candidates.length === 0) {
@@ -1165,6 +1660,7 @@ function clearQueuedCardAnimations() {
 }
 
 function maybeCpuTurn() {
+  if (hub.session.isRoomPlay) return;
   if (tutorial?.active) return;
   clearCpuTimers(false);
   if (!state || state.phase !== 'round') return;
@@ -2028,7 +2524,7 @@ function renderTopGameCount() {
 }
 
 function syncInteractionState() {
-  const human = state?.players[0];
+  const human = localPlayer();
   const specialsAllowed = hasAvailableSpecial(human);
   if (!specialsAllowed || (specialMode && !canPlayerChooseSpecial(human, specialMode))) {
     specialMode = null;
@@ -2046,7 +2542,8 @@ function stockCountClass(count) {
 
 function renderMarket() {
   els.marketCards.innerHTML = '';
-  const humanPreview = state.players[0] && !state.players[0].out ? bestAvailableHandDisplay(state.players[0]) : null;
+  const human = localPlayer();
+  const humanPreview = human && !human.out ? bestAvailableHandDisplay(human) : null;
   state.market.forEach((card, idx) => {
     const selectable = specialMode === 'market' && !state.marketLocks[idx] && isHumanTurnBeforeNormal();
     const node = cardNode(card, { selectable });
@@ -2077,7 +2574,7 @@ function renderSeats() {
   els.seatLayer.innerHTML = '';
   const cpuSlots = getCpuSeatSlots(state.players.length - 1);
   for (const p of state.players) {
-    const slot = p.id === 0 ? 'human' : cpuSlots[p.id - 1];
+    const slot = isLocalPlayer(p) ? 'human' : cpuSlots[remoteSeatPosition(p) - 1];
     const seat = document.createElement('div');
     seat.className = `player-field field-${slot}`;
     seat.style.setProperty('--player-color', p.color);
@@ -2101,7 +2598,7 @@ function renderSeats() {
     if (p.out) hand.classList.add('out');
     if (p.out || p.folded || p.lastFolded) hand.classList.add('inactive');
     const hideFoldedShowdownHand = p.folded && (state.phase === 'showdown' || state.phase === 'result');
-    const bestHand = p.id === 0 && !p.out && !hideFoldedShowdownHand ? bestAvailableHandDisplay(p) : null;
+    const bestHand = isLocalPlayer(p) && !p.out && !hideFoldedShowdownHand ? bestAvailableHandDisplay(p) : null;
     hand.innerHTML = `
       ${bestHand ? `<div class="best-hand-line role-tone-${bestHand.tone}">${escapeHtml(bestHand.label)}</div>` : ''}
       <div class="field-cards" aria-label="${escapeHtml(p.name)} hand"></div>
@@ -2112,20 +2609,20 @@ function renderSeats() {
       const publicHandCard = isPublicHandCard(p, card);
       const canPublishShowdown = canPublishShowdownPlayer(p);
       const showdownReveal = canPublishShowdown && state.phase === 'showdown' && showdownAnimation?.revealedHandPlayerIds.has(p.id);
-      const regularReveal = state.phase !== 'showdown' && state.phase !== 'result' && (p.id === 0 || publicHandCard);
+      const regularReveal = state.phase !== 'showdown' && state.phase !== 'result' && (isLocalPlayer(p) || publicHandCard);
       const resultReveal = state.phase === 'result' && canPublishShowdown;
       const reveal = resultReveal || showdownReveal || regularReveal;
       if (reveal) {
-        node = cardNode(card, { small: true, selectable: p.id === 0 && canSelectHandCard() });
+        node = cardNode(card, { small: true, selectable: isLocalPlayer(p) && canSelectHandCard() });
         if (publicHandCard && card.randomExchangeLocked) node.appendChild(publicCardDieNode());
-        else if (p.id === 0 && publicHandCard) node.appendChild(publicCardEyeNode());
+        else if (isLocalPlayer(p) && publicHandCard) node.appendChild(publicCardEyeNode());
       } else {
         node = cardBackNode(true);
       }
       node.dataset.handIndex = idx;
       node.dataset.cardId = card.id;
       node.dataset.cardKey = cardKey(card);
-      if (p.id === 0 && idx === selectedHandIndex) node.classList.add('selected');
+      if (isLocalPlayer(p) && idx === selectedHandIndex) node.classList.add('selected');
       if (bestHand?.cardIds.has(card.id)) node.classList.add('best-card');
       if (handRevealCardIds.has(card.id)) node.classList.add('hand-reveal');
       if (peekFlipCardIds.has(card.id)) node.classList.add('peek-flip');
@@ -2136,7 +2633,7 @@ function renderSeats() {
         node.classList.add('opening-deal');
         node.style.setProperty('--opening-deal-delay', `${openingDealDelayByCardId.get(card.id)}ms`);
       }
-      if (p.id === 0 && canSelectHandCard()) {
+      if (isLocalPlayer(p) && canSelectHandCard()) {
         node.addEventListener('click', () => {
           selectedHandIndex = idx;
           render();
@@ -2156,7 +2653,7 @@ function renderSeats() {
       hand.appendChild(showdownPointNode(result?.hand.role.points || 0, result?.hand.role.label));
     }
     els.seatLayer.append(seat, hand);
-    if (p.id === 0) makeHumanPanelDraggable(hand, 'cards', row);
+    if (isLocalPlayer(p)) makeHumanPanelDraggable(hand, 'cards', row);
   }
   cpuNormalActionPulseIds.clear();
   clearQueuedCardAnimations();
@@ -2226,13 +2723,13 @@ function renderInfoPanels() {
   for (const p of state.players) {
     const key = displayedClaimKey(p);
     const claim = CLAIM_BY_KEY[key] || CLAIM_BY_KEY.none;
-    const claimEditable = !p.out && p.id === 0 && isHumanTurnBeforeNormal() && state.round <= 2;
+    const claimEditable = !p.out && isLocalPlayer(p) && isHumanTurnBeforeNormal() && state.round <= 2;
     const claimMarkup = `
       <span class="claim-icon">${escapeHtml(claim.icon)}</span>
       <span class="claim-text role-tone-${claim.rank + 1}">${escapeHtml(claim.label)}</span>
     `;
     const panel = document.createElement('article');
-    const slot = p.id === 0 ? 'human' : infoSlots[p.id - 1];
+    const slot = isLocalPlayer(p) ? 'human' : infoSlots[remoteSeatPosition(p) - 1];
     panel.className = `info-card info-${slot} floating-panel${p.out ? ' out inactive' : ''}`;
     if (showdownAnimation?.activeClaimPlayerId === p.id) panel.classList.add('showdown-claim-focus');
     panel.style.setProperty('--player-color', p.color);
@@ -2262,7 +2759,7 @@ function renderInfoPanels() {
       panel.appendChild(showdownPointNode(showdownResultFor(p.id)?.claimDelta || 0));
     }
     els.infoLayer.appendChild(panel);
-    if (p.id === 0) {
+    if (isLocalPlayer(p)) {
       panel.querySelector('.info-claim-trigger')?.addEventListener('click', openClaimBoard);
       makeHumanPanelDraggable(panel, 'info');
     }
@@ -2323,7 +2820,7 @@ function getInfoSlots(cpuCount) {
 function displayedClaimKey(player) {
   if (player.out) return 'none';
   if (state.phase === 'result' || state.phase === 'showdown' || state.phase === 'lastFold' || state.round === 3) return player.finalClaim || player.revealedClaim || 'none';
-  if (player.id === 0 && state.phase === 'round' && state.round <= 2) return player.pendingClaim || 'none';
+  if (isLocalPlayer(player) && state.phase === 'round' && state.round <= 2) return player.pendingClaim || 'none';
   return player.revealedClaim || 'none';
 }
 
@@ -2334,7 +2831,7 @@ function renderHumanHand() {
 }
 
 function renderActionPanel() {
-  const human = state.players[0];
+  const human = localPlayer();
   const isTurn = isHumanTurnBeforeNormal();
   els.actionPanel.classList.toggle('hidden', !isTurn);
   makePlayPanelResizable();
@@ -2543,7 +3040,7 @@ function openClaimBoard() {
 }
 
 function renderClaimBoardOptions() {
-  const human = state.players[0];
+  const human = localPlayer();
   const actualRole = evaluatePlayerHand(human).role;
   const options = CLAIM_OPTIONS.map(claim => {
     const selected = claim.key === (human.pendingClaim || 'none');
@@ -2627,7 +3124,7 @@ function renderLastFoldPanel() {
     pill.textContent = `${p.name}: ${choice === 'lastFold' ? 'Last Fold' : choice === 'continue' ? 'Continue' : 'Thinking...'}`;
     els.lastFoldChoices.appendChild(pill);
   }
-  const human = state.players[0];
+  const human = localPlayer();
   els.continueButton.disabled = human.out || !!human.lastFoldChoice || human.folded;
   els.lastFoldButton.disabled = human.out || !!human.lastFoldChoice || human.folded || human.allIn;
 }
@@ -2693,9 +3190,10 @@ function resultActionButtons() {
     `;
   }
   const nextLabel = isMatchOver() ? 'Final Results' : 'Next Game';
+  const nextDisabled = hub.session.isRoomPlay && !hub.session.isHost ? 'disabled' : '';
   return `
     <div class="result-actions">
-      <button id="nextGameButton" class="primary-button" type="button">${nextLabel}</button>
+      <button id="nextGameButton" class="primary-button" type="button" ${nextDisabled}>${nextLabel}</button>
       <button id="quitGameButton" class="danger-button" type="button">Quit</button>
     </div>
   `;
@@ -2703,8 +3201,19 @@ function resultActionButtons() {
 
 function bindResultActions() {
   document.getElementById('leaveTutorialButton')?.addEventListener('click', leaveTutorial);
-  document.getElementById('nextGameButton')?.addEventListener('click', startNewGame);
+  document.getElementById('nextGameButton')?.addEventListener('click', requestNextGame);
   document.getElementById('quitGameButton')?.addEventListener('click', openQuitDialog);
+}
+
+function requestNextGame() {
+  if (hub.session.isRoomPlay) {
+    if (hub.session.isHost) {
+      startNewGame();
+      publishSnapshot('next_game');
+    }
+    return;
+  }
+  startNewGame();
 }
 
 function leaveTutorial() {
@@ -2857,7 +3366,7 @@ function playerChipCenter(playerId) {
 }
 
 function playerFieldNodeCenter(playerId, selector) {
-  const slot = playerId === 0 ? 'human' : getCpuSeatSlots(state.players.length - 1)[playerId - 1];
+  const slot = playerId === localPlayerId ? 'human' : getCpuSeatSlots(state.players.length - 1)[remoteSeatPosition({ id: playerId }) - 1];
   const rect = document.querySelector(`.field-${slot} ${selector}`)?.getBoundingClientRect();
   const area = els.tableArea.getBoundingClientRect();
   if (!rect) return null;
@@ -2970,7 +3479,7 @@ function updateSpecialButtons(player) {
 }
 
 function isHumanTurnBeforeNormal() {
-  const human = state?.players[0];
+  const human = localPlayer();
   return !!state && state.phase === 'round' && state.players[state.currentPlayerIndex] === human && canPlayerActInRound(human) && !human.actedThisRound;
 }
 
@@ -3001,6 +3510,9 @@ function publicCardDieNode() {
 }
 
 function revealProofTargets(user) {
+  if (hub.session.isRoomPlay && !hub.session.isHost) {
+    return state.players.filter(player => player.id !== user?.id && !player.out && !player.folded && player.hand.length);
+  }
   return state.players.filter(player => revealProofCards(player, user).length);
 }
 
@@ -3203,7 +3715,7 @@ function setSetupMode(mode) {
 }
 
 function setSpecialMode(type) {
-  const human = state?.players[0];
+  const human = localPlayer();
   if (!canPlayerChooseSpecial(human, type)) return;
   specialMode = type;
   selectedHandIndex = null;
@@ -3220,7 +3732,7 @@ function setSpecialMode(type) {
 }
 
 function renderSpecialDetail(type) {
-  const human = state.players[0];
+  const human = localPlayer();
   if (!type) {
     els.specialDetail.innerHTML = '<div class="special-description">Select a special move for its effect and controls.</div>';
     return;
@@ -3250,7 +3762,7 @@ function renderSpecialDetail(type) {
 }
 
 function confirmHumanSpecial() {
-  const human = state.players[0];
+  const human = localPlayer();
   if (tutorial?.active) {
     if (specialMode === 'exchange' && selectedHandIndex !== 2) return;
     if (specialMode === 'peek' && Number(document.getElementById('peekTarget')?.value) !== 2) return;
@@ -3258,6 +3770,18 @@ function confirmHumanSpecial() {
       const randomCount = document.getElementById('randomCount');
       if (randomCount) randomCount.value = '1';
     }
+  }
+  const payload = {};
+  if (specialMode === 'exchange') payload.handIndex = selectedHandIndex;
+  if (specialMode === 'random') payload.count = Number(document.getElementById('randomCount')?.value || 1);
+  if (specialMode === 'peek') payload.targetId = Number(document.getElementById('peekTarget')?.value);
+  if (specialMode === 'market') {
+    payload.handIndex = selectedHandIndex;
+    payload.marketIndex = selectedMarketIndex;
+  }
+  if (hub.session.isRoomPlay) {
+    sendHubAction(HUB_ACTION_TYPES.SPECIAL, { type: specialMode, payload });
+    return;
   }
   let ok = false;
   if (specialMode === 'exchange') ok = useSpecial(human, 'exchange', { handIndex: selectedHandIndex });
@@ -3268,6 +3792,40 @@ function confirmHumanSpecial() {
   if (ok) resetSelections();
   render();
   if (ok) tutorialAdvanceFrom(`specialDone:${usedType}`);
+}
+
+function submitClaimAction(claim) {
+  const human = localPlayer();
+  if (!human || !isHumanTurnBeforeNormal() || state.round > 2) return;
+  if (hub.session.isRoomPlay) {
+    sendHubAction(HUB_ACTION_TYPES.CLAIM, { claim });
+    els.claimBoardDialog.close();
+    return;
+  }
+  human.pendingClaim = claim;
+  els.claimBoardDialog.close();
+  render();
+  tutorialAdvanceFrom(`claim:${claim}`);
+}
+
+function submitNormalAction(action) {
+  const human = localPlayer();
+  if (!human) return;
+  if (hub.session.isRoomPlay) {
+    sendHubAction(HUB_ACTION_TYPES.NORMAL, { action });
+    return;
+  }
+  normalAction(human, action);
+}
+
+function submitLastFoldAction(choice) {
+  const human = localPlayer();
+  if (!human) return;
+  if (hub.session.isRoomPlay) {
+    sendHubAction(HUB_ACTION_TYPES.LAST_FOLD, { choice });
+    return;
+  }
+  chooseLastFold(human, choice);
 }
 
 function escapeHtml(text) {
@@ -3286,6 +3844,8 @@ document.addEventListener('click', event => {
   }
 }, true);
 els.startButton.addEventListener('click', startTable);
+els.lobbyStartButton?.addEventListener('click', requestRoomStart);
+els.lobbyReadyButton?.addEventListener('click', toggleReady);
 els.tutorialButton.addEventListener('click', startTutorial);
 els.chipModeTab.addEventListener('click', () => setSetupMode('chips'));
 els.pointModeTab.addEventListener('click', () => setSetupMode('points'));
@@ -3308,18 +3868,22 @@ els.closeRules.addEventListener('click', () => {
 els.closeClaimBoard.addEventListener('click', () => els.claimBoardDialog.close());
 els.claimBoardOptions.addEventListener('click', event => {
   const button = event.target.closest('[data-claim]');
-  const human = state?.players[0];
+  const human = localPlayer();
   if (!button || !human || !isHumanTurnBeforeNormal() || state.round > 2) return;
   if (tutorial?.active && tutorial.index === 11 && button.dataset.claim !== 'fullHouse') return;
   if (tutorial?.active && tutorial.index === 29 && button.dataset.claim !== 'four') return;
-  human.pendingClaim = button.dataset.claim;
-  els.claimBoardDialog.close();
-  render();
-  tutorialAdvanceFrom(`claim:${button.dataset.claim}`);
+  submitClaimAction(button.dataset.claim);
 });
 els.cancelQuitButton.addEventListener('click', () => els.quitDialog.close());
 els.confirmQuitButton.addEventListener('click', () => {
   els.quitDialog.close();
+  if (hub.session.isRoomPlay) {
+    if (hub.session.isHost) {
+      endGame('Game ended by the host.');
+      publishSnapshot('quit');
+    }
+    return;
+  }
   endGame('Game ended by the player.');
 });
 els.collapsePlayPanel.addEventListener('click', () => {
@@ -3344,11 +3908,11 @@ window.addEventListener('pointercancel', event => {
   stopPlayPanelResize(event);
 });
 window.addEventListener('resize', refitHumanPanelPositions);
-els.callButton.addEventListener('click', () => normalAction(state.players[0], 'call'));
-els.raiseButton.addEventListener('click', () => normalAction(state.players[0], 'raise'));
-els.foldButton.addEventListener('click', () => normalAction(state.players[0], 'fold'));
-els.continueButton.addEventListener('click', () => chooseLastFold(state.players[0], 'continue'));
-els.lastFoldButton.addEventListener('click', () => chooseLastFold(state.players[0], 'lastFold'));
+els.callButton.addEventListener('click', () => submitNormalAction('call'));
+els.raiseButton.addEventListener('click', () => submitNormalAction('raise'));
+els.foldButton.addEventListener('click', () => submitNormalAction('fold'));
+els.continueButton.addEventListener('click', () => submitLastFoldAction('continue'));
+els.lastFoldButton.addEventListener('click', () => submitLastFoldAction('lastFold'));
 els.iconPicker.addEventListener('click', e => {
   const button = e.target.closest('.icon-choice');
   if (!button) return;
@@ -3358,6 +3922,7 @@ els.iconPicker.addEventListener('click', e => {
 window.addEventListener('beforeunload', () => clearCpuTimers(true));
 
 populateRules();
+connectHubRoom();
 
 async function toggleFullscreen() {
   if (document.fullscreenElement) {
