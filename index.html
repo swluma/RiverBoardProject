@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Role Board Poker</title>
+  <link rel="stylesheet" href="style.css?v=sound-layer-1" />
+</head>
+<body>
+  <div id="app">
+    <button id="fullscreenButton" class="fullscreen-button" type="button" title="Toggle full screen" aria-label="Toggle full screen">🖥️</button>
+    <div id="topGameCount" class="top-game-count hidden" aria-live="polite">0/∞ games</div>
+    <button id="rulesButton" class="rules-button" type="button">Hands</button>
+
+    <section id="setupScreen" class="setup-screen">
+      <div class="setup-table"></div>
+      <div class="setup-card floating-panel">
+        <h1>Role Board Poker</h1>
+        <p class="setup-subtitle">Choose your name and icon before taking the lower seat.</p>
+        <div class="mode-tabs" role="tablist" aria-label="Play mode">
+          <button id="chipModeTab" class="mode-tab selected" type="button" data-mode="chips">Chip Mode</button>
+          <button id="pointModeTab" class="mode-tab" type="button" data-mode="points">Point Mode</button>
+        </div>
+        <div class="setup-grid">
+          <label class="name-field">Name<input id="playerName" maxlength="14" value="You" /></label>
+          <label class="cpu-field">CPU<select id="cpuCount"><option value="1">1 CPU</option><option value="2" selected>2 CPUs</option><option value="3">3 CPUs</option></select></label>
+          <label class="setup-adjuster setup-common">Max Games
+            <span class="setup-range-row">
+              <input id="maxGamesSlider" type="range" min="0" max="30" step="1" value="0" />
+              <input id="maxGames" type="number" min="0" max="30" step="1" value="0" />
+              <button class="setup-reset-button" type="button" data-reset-target="maxGames" title="Reset Max Games" aria-label="Reset Max Games">&#x21BA;</button>
+            </span>
+          </label>
+          <label class="setup-adjuster setup-common">Hand Cards
+            <span class="setup-range-row">
+              <input id="handCardCountSlider" type="range" min="2" max="5" step="1" value="5" />
+              <input id="handCardCount" type="number" min="2" max="5" step="1" value="5" />
+              <button class="setup-reset-button" type="button" data-reset-target="handCardCount" title="Reset Hand Cards" aria-label="Reset Hand Cards">&#x21BA;</button>
+            </span>
+          </label>
+          <div class="setup-row setup-mode-panel" id="chipModePanel">
+            <label class="setup-adjuster">Starting Chips
+              <span class="setup-range-row">
+                <input id="startingChipsSlider" type="range" min="1" max="999" step="1" value="100" />
+                <input id="startingChips" type="number" min="1" max="999" step="1" value="100" />
+                <button class="setup-reset-button" type="button" data-reset-target="startingChips" title="Reset Starting Chips" aria-label="Reset Starting Chips">&#x21BA;</button>
+              </span>
+            </label>
+            <label class="setup-adjuster">Ante
+              <span class="setup-range-row">
+                <input id="baseBetSlider" type="range" min="1" max="999" step="1" value="5" />
+                <input id="baseBet" type="number" min="1" max="999" step="1" value="5" />
+                <button class="setup-reset-button" type="button" data-reset-target="baseBet" title="Reset Ante" aria-label="Reset Ante">&#x21BA;</button>
+              </span>
+            </label>
+          </div>
+          <div class="setup-row setup-mode-panel hidden" id="pointModePanel">
+            <label class="setup-adjuster">Points To Win
+              <span class="setup-range-row">
+                <input id="pointsToWinSlider" type="range" min="1" max="3" step="1" value="3" />
+                <input id="pointsToWin" type="number" min="1" max="3" step="1" value="3" />
+                <button class="setup-reset-button" type="button" data-reset-target="pointsToWin" title="Reset Points To Win" aria-label="Reset Points To Win">&#x21BA;</button>
+              </span>
+            </label>
+            <label class="setup-adjuster">Fold Win Points
+              <span class="setup-range-row">
+                <input id="foldWinPointsSlider" type="range" min="0" max="1" step="0.25" value="0.25" />
+                <input id="foldWinPoints" type="number" min="0" max="1" step="0.25" value="0.25" />
+                <button class="setup-reset-button" type="button" data-reset-target="foldWinPoints" title="Reset Fold Win Points" aria-label="Reset Fold Win Points">&#x21BA;</button>
+              </span>
+            </label>
+          </div>
+        </div>
+        <div class="icon-picker" id="iconPicker" aria-label="Choose player icon">
+          <button type="button" class="icon-choice selected" data-icon="🦉">🦉</button>
+          <button type="button" class="icon-choice" data-icon="🦊">🦊</button>
+          <button type="button" class="icon-choice" data-icon="🐻">🐻</button>
+          <button type="button" class="icon-choice" data-icon="🐸">🐸</button>
+          <button type="button" class="icon-choice" data-icon="🐱">🐱</button>
+          <button type="button" class="icon-choice" data-icon="🐺">🐺</button>
+        </div>
+        <button id="startButton" class="center-start" type="button">Start Game</button>
+      </div>
+    </section>
+
+    <main id="gameScreen" class="game-screen hidden">
+      <section id="tableArea" class="table-area">
+        <div class="oval-table" aria-label="Poker table">
+          <div class="table-felt-lines"></div>
+          <div class="table-stats" id="tableStats">
+            <span id="roundLabel">Round -</span>
+            <span>Pot <strong id="potLabel">0</strong></span>
+            <span>Carry <strong id="carryLabel">0</strong></span>
+          </div>
+
+          <div class="stock-pile" aria-label="Stock pile">
+            <div class="mini-card-back stock-card"><span id="stockCount">0</span></div>
+          </div>
+
+          <div class="discard-pile" aria-label="Discard pile">
+            <div class="mini-card-back discard-card d1"></div>
+            <div class="mini-card-back discard-card d2"></div>
+            <div class="mini-card-back discard-card d3"></div>
+            <div class="mini-card-back discard-card d4"></div>
+            <div class="mini-card-back discard-card d5"></div>
+          </div>
+
+          <div id="marketCards" class="market-cards" aria-label="Market cards"></div>
+        </div>
+
+        <div id="seatLayer" class="seat-layer"></div>
+        <div id="infoLayer" class="info-layer"></div>
+        <div id="roundBanner" class="round-banner hidden" aria-live="polite"></div>
+        <div id="humanHand" class="human-hand floating-panel"></div>
+        <div id="publicPulse" class="public-pulse">Public actions appear here.</div>
+
+        <section id="actionPanel" class="play-panel floating-panel hidden">
+          <div class="play-header">
+            <span class="mini-label">Play Panel</span>
+            <button id="collapsePlayPanel" class="collapse-button" type="button">Collapse</button>
+          </div>
+          <div id="playPanelBody" class="play-body">
+            <div id="specialControls" class="play-block special-block">
+              <span class="mini-label">Special</span>
+              <div class="special-buttons">
+                <button data-special="exchange" class="special-button" type="button" title="Card Exchange">💱</button>
+                <button data-special="random" class="special-button" type="button" title="Random Exchange: redraw up to 3; first use adds one die card">🎲</button>
+                <button data-special="peek" class="special-button" type="button" title="Reveal Proof">👁️</button>
+                <button data-special="market" class="special-button" type="button" title="Market Swap">🚀</button>
+              </div>
+              <div id="specialDetail" class="special-detail"></div>
+            </div>
+            <div class="play-block normal-block">
+              <span class="mini-label">Normal</span>
+              <div class="normal-buttons">
+                <button id="callButton" class="primary-button" type="button">Call</button>
+                <button id="raiseButton" class="warning-button" type="button" title="Double target. 3 Raises per player each game.">Raise x2</button>
+                <div id="raiseCounter" class="raise-counter" aria-live="polite">3 raises left</div>
+                <button id="foldButton" class="danger-button" type="button">Fold</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="lastFoldPanel" class="last-fold-panel floating-panel hidden">
+          <div class="last-fold-title">Last Fold <span id="lastFoldTimer">7</span>s</div>
+          <div id="lastFoldChoices" class="last-fold-choices"></div>
+          <div class="last-fold-buttons">
+            <button id="continueButton" class="primary-button" type="button">Continue</button>
+            <button id="lastFoldButton" class="danger-button" type="button">Last Fold</button>
+          </div>
+        </section>
+
+        <section id="resultPanel" class="result-panel floating-panel hidden"></section>
+      </section>
+
+      <section id="finalResultScreen" class="final-result-screen hidden"></section>
+    </main>
+
+    <dialog id="rulesDialog" class="rules-dialog floating-panel">
+      <button id="closeRules" class="close-button" type="button">×</button>
+      <h2>Hands & Actions</h2>
+      <div id="rulesList" class="rules-list"></div>
+      <p class="dialog-note">Final score = actual hand points + claim bonus if achieved. A missed claim subtracts the point difference from the actual best hand. No Claim has no risk and no reward.</p>
+    </dialog>
+
+    <dialog id="quitDialog" class="quit-dialog floating-panel">
+      <h2>End game?</h2>
+      <p>Show the final scores and stop this game now.</p>
+      <div class="quit-actions">
+        <button id="cancelQuitButton" type="button">Keep Playing</button>
+        <button id="confirmQuitButton" class="danger-button" type="button">End Game</button>
+      </div>
+    </dialog>
+
+    <dialog id="claimBoardDialog" class="claim-board-dialog floating-panel">
+      <button id="closeClaimBoard" class="close-button" type="button">×</button>
+      <h2>Role Board</h2>
+      <p class="claim-board-note">A role board choice changes your score. Achieve the chosen hand or a better one to gain its points. Miss it and lose the point difference from your actual best hand. Your decision stays hidden until the round ends.</p>
+      <div id="claimBoardOptions" class="claim-board-options"></div>
+    </dialog>
+  </div>
+  <script src="game.js?v=card-sample-1"></script>
+</body>
+</html>
