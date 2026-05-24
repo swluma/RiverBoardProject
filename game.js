@@ -553,6 +553,14 @@ function cloneGameStateForGuests() {
   return snapshot;
 }
 
+function isRenderableGameState(candidate) {
+  return !!candidate
+    && Array.isArray(candidate.players)
+    && candidate.players.length > 0
+    && typeof candidate.phase === 'string'
+    && candidate.phase !== 'setup';
+}
+
 function publishSnapshot(reason = 'snapshot') {
   if (!isRoomHost() || !hub.connected || !state || hub.applyingRemote) return;
   bumpVersion();
@@ -567,6 +575,10 @@ function publishSnapshot(reason = 'snapshot') {
 
 function applySnapshot(snapshot) {
   if (!snapshot?.state) return;
+  if (!isRenderableGameState(snapshot.state)) {
+    if (hub.session.isRoomPlay && !state) prepareRoomSetup();
+    return;
+  }
   if (!hub.session.isHost && state?.phase === 'showdown' && showdownAnimation && snapshot.state.phase === 'result') {
     hub.pendingResultSnapshot = snapshot;
     return;
@@ -581,6 +593,7 @@ function applySnapshot(snapshot) {
   applyAnimationSync(snapshot.animation);
   localPlayerId = hubSeatForPlayerId(hub.session.playerId);
   resetSelections();
+  document.body.classList.remove('room-setup-visible');
   els.setupScreen.classList.add('hidden');
   els.lobbyDialog?.close();
   els.gameScreen.classList.remove('hidden');
@@ -803,6 +816,12 @@ function connectHubRoom() {
     hub.lastError = 'WebSocket connection failed.';
     renderLobby();
   });
+  window.setTimeout(() => {
+    if (hub.session.isRoomPlay && !state) prepareRoomSetup();
+  }, 0);
+  window.setTimeout(() => {
+    if (hub.session.isRoomPlay && !state) prepareRoomSetup();
+  }, 600);
 }
 
 function handleHubMessage(type, payload) {
@@ -811,6 +830,7 @@ function handleHubMessage(type, payload) {
     hub.room = payload.room || hub.room;
     hub.ready = !!hub.room?.players?.find(player => player.id === hub.session.playerId)?.ready;
     localPlayerId = hubSeatForPlayerId(hub.session.playerId);
+    if (!state && hub.room?.phase !== 'playing') prepareRoomSetup();
     renderLobby();
     sendPlayerMeta();
     if (hub.session.isHost) publishSetupSync();
@@ -877,6 +897,7 @@ function handleHubMessage(type, payload) {
 }
 
 function prepareRoomSetup() {
+  document.body.classList.add('room-setup-visible');
   els.setupScreen.classList.remove('hidden');
   els.gameScreen.classList.add('hidden');
   document.body.classList.remove('tutorial-mode');
@@ -923,6 +944,7 @@ function startRoomGameAsHost() {
   syncSetupAmount(els.foldWinPoints, els.foldWinPointsSlider);
   state = createInitialState(0, Number(els.startingChips.value), Number(els.baseBet.value));
   els.lobbyDialog?.close();
+  document.body.classList.remove('room-setup-visible');
   els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   startNewGame();
@@ -1074,6 +1096,7 @@ function startTable() {
   syncSetupAmount(els.pointsToWin, els.pointsToWinSlider);
   syncSetupAmount(els.foldWinPoints, els.foldWinPointsSlider);
   state = createInitialState(Number(els.cpuCount.value), Number(els.startingChips.value), Number(els.baseBet.value));
+  document.body.classList.remove('room-setup-visible');
   els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   startNewGame();
@@ -1093,6 +1116,7 @@ function startTutorial() {
   state.mode = 'chips';
   state.maxGames = 1;
   state.handCardCount = 5;
+  document.body.classList.remove('room-setup-visible');
   els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   ensureTutorialUi();

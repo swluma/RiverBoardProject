@@ -48,6 +48,12 @@ select, input {
   padding: 8px 10px;
 }
 .hidden { display: none !important; }
+body.room-setup-visible #setupScreen {
+  display: grid !important;
+}
+body.room-setup-visible #gameScreen {
+  display: none !important;
+}
 .floating-panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -100,9 +106,11 @@ select, input {
   display: grid;
   place-items: center;
   position: relative;
+  z-index: 20;
 }
 .setup-table {
   position: absolute;
+  z-index: 0;
   width: min(76vw, 700px);
   height: min(48vh, 310px);
   border-radius: 50%;
@@ -125,6 +133,7 @@ select, input {
 }
 .setup-card {
   position: relative;
+  z-index: 1;
   width: min(480px, calc(100vw - 24px));
   padding: 20px;
   border-radius: 24px;
