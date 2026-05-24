@@ -1689,11 +1689,6 @@ function render() {
 }
 
 function ensureTutorialUi() {
-  if (!document.querySelector('.tutorial-dim')) {
-    const dim = document.createElement('div');
-    dim.className = 'tutorial-dim';
-    document.body.appendChild(dim);
-  }
   if (!document.querySelector('.tutorial-popover')) {
     const pop = document.createElement('section');
     pop.className = 'tutorial-popover';
@@ -1796,28 +1791,36 @@ function tutorialLiftElement(element) {
 function positionTutorialPopover(target) {
   const pop = document.querySelector('.tutorial-popover');
   if (!pop || !tutorial?.active) return;
-  const margin = 14;
-  const gap = 14;
-  const popWidth = Math.min(520, window.innerWidth - margin * 2);
+  const compact = window.innerWidth <= 430 || window.innerHeight <= 580;
+  const margin = compact ? 6 : 14;
+  const gap = compact ? 8 : 14;
+  const maxWidth = compact ? window.innerWidth - margin * 2 : Math.min(520, window.innerWidth - margin * 2);
+  const popWidth = Math.max(240, maxWidth);
   const fallbackLeft = window.innerWidth / 2;
+  pop.style.maxHeight = compact ? `${Math.max(120, Math.min(220, window.innerHeight * 0.46))}px` : '';
   if (!target) {
     pop.classList.remove('above');
     pop.style.setProperty('--tutorial-popover-left', `${fallbackLeft}px`);
-    pop.style.setProperty('--tutorial-popover-top', `${Math.max(margin, window.innerHeight - pop.offsetHeight - margin)}px`);
+    const fallbackTop = clamp(window.innerHeight - pop.offsetHeight - margin, margin, window.innerHeight - pop.offsetHeight - margin);
+    pop.style.setProperty('--tutorial-popover-top', `${fallbackTop}px`);
     pop.style.setProperty('--tutorial-arrow-left', '28px');
     return;
   }
   const rect = target.getBoundingClientRect();
-  const popHeight = pop.offsetHeight || 120;
+  const popHeight = Math.min(pop.offsetHeight || 120, window.innerHeight - margin * 2);
   const spaceAbove = rect.top - margin;
   const spaceBelow = window.innerHeight - rect.bottom - margin;
-  const placeAbove = spaceBelow < popHeight + gap && spaceAbove > spaceBelow;
+  let placeAbove = spaceBelow < popHeight + gap && spaceAbove > spaceBelow;
   const center = rect.left + rect.width / 2;
   const half = popWidth / 2;
   const left = clamp(center, margin + half, window.innerWidth - margin - half);
-  const top = placeAbove
+  let top = placeAbove
     ? Math.max(margin, rect.top - popHeight - gap)
     : Math.min(window.innerHeight - popHeight - margin, rect.bottom + gap);
+  if (top < margin || top + popHeight > window.innerHeight - margin) {
+    top = clamp(top, margin, Math.max(margin, window.innerHeight - popHeight - margin));
+    placeAbove = top + popHeight <= rect.top;
+  }
   const arrowLeft = clamp(center - (left - half), 22, popWidth - 22);
   pop.classList.toggle('above', placeAbove);
   pop.style.setProperty('--tutorial-popover-left', `${left}px`);
@@ -1835,7 +1838,10 @@ function applyTutorialControlState() {
   controls.forEach(control => {
     if (control.disabled || control.closest('.tutorial-popover')) return;
     const allowed = tutorial.allow && control.closest(tutorial.allow);
-    if (!allowed) {
+    if (allowed) {
+      control.disabled = false;
+      delete control.dataset.tutorialDisabled;
+    } else {
       control.disabled = true;
       control.dataset.tutorialDisabled = 'true';
     }

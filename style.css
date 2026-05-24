@@ -534,14 +534,6 @@ select, input {
 .state-pill { font-size: 0.58rem; padding: 2px 5px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--muted); }
 .state-pill.danger { color: #ffd5d5; background: rgba(255, 104, 104, 0.18); }
 
-.tutorial-dim {
-  position: fixed;
-  inset: 0;
-  z-index: 9000;
-  display: none;
-  background: rgba(0, 0, 0, 0.58);
-  pointer-events: none;
-}
 .tutorial-popover {
   position: fixed;
   left: var(--tutorial-popover-left, 50%);
@@ -550,6 +542,8 @@ select, input {
   z-index: 9020;
   display: none;
   width: min(520px, calc(100vw - 20px));
+  max-height: calc(100dvh - 20px);
+  overflow: auto;
   transform: translateX(-50%);
   padding: 14px 16px;
   border-radius: 16px;
@@ -593,19 +587,55 @@ select, input {
   padding: 7px 12px;
   border-radius: 10px;
 }
-body.tutorial-mode .tutorial-dim,
 body.tutorial-mode .tutorial-popover {
   display: block;
 }
 .tutorial-focus {
-  z-index: 9010 !important;
+  z-index: 9011 !important;
   outline: 3px solid #ffd76a !important;
   outline-offset: 4px;
-  box-shadow: 0 0 0 7px rgba(255, 215, 106, 0.22), 0 16px 38px rgba(0,0,0,0.52) !important;
+  animation: tutorialGlow 1.15s ease-in-out infinite;
 }
 .tutorial-lift {
-  position: relative !important;
   z-index: 9010 !important;
+  pointer-events: auto;
+}
+@keyframes tutorialGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 4px rgba(255, 215, 106, 0.3), 0 0 18px rgba(255, 215, 106, 0.36);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(255, 215, 106, 0.14), 0 0 34px rgba(255, 215, 106, 0.78);
+  }
+}
+body.tutorial-mode dialog[open] {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 9010;
+  transform: translate(-50%, -50%);
+  margin: 0;
+}
+
+@media (max-width: 430px), (max-height: 580px) {
+  .tutorial-popover {
+    width: calc(100vw - 12px);
+    max-height: min(46dvh, 220px);
+    padding: 10px 12px;
+    border-radius: 12px;
+  }
+  .tutorial-popover p {
+    font-size: 0.78rem;
+    line-height: 1.32;
+  }
+  .tutorial-popover-actions {
+    margin-top: 8px;
+  }
+  .tutorial-popover button {
+    min-height: 30px;
+    padding: 5px 10px;
+    font-size: 0.78rem;
+  }
 }
 
 .human-hand {
