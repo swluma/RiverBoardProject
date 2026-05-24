@@ -709,6 +709,7 @@ function resolveShowdown() {
       finalScore: hand.role.points + claimDelta,
       candidate: !p.folded && !p.lastFolded,
       showdownGain: 0,
+      lastFoldRefund: 0,
     };
   });
 
@@ -726,9 +727,11 @@ function resolveShowdown() {
       pulse(`${tied.map(r => r.player.name).join(', ')} ${tied.length > 1 ? 'score' : 'scores'} ${formatPointValue(pointValue)} point${pointValue === 1 ? '' : 's'}.`);
     }
   } else if (candidates.length === 0) {
+    applyLastFoldRefunds(results);
     state.carriedPot = state.pot;
     pulse(`Everyone last-folded. Pot ${state.pot} carries over.`);
   } else {
+    applyLastFoldRefunds(results);
     const sorted = candidates.sort(compareResults);
     const winner = sorted[0];
     const tied = sorted.filter(r => compareResults(r, winner) === 0);
@@ -874,6 +877,20 @@ function canPublishShowdownResult(result) {
 
 function canPublishShowdownPlayer(player) {
   return !!player && !player.folded;
+}
+
+function applyLastFoldRefunds(results) {
+  const ranked = results.filter(canPublishShowdownResult).sort(compareResults);
+  const first = ranked[0];
+  for (const result of ranked) {
+    if (!result.player.lastFolded || (first && compareResults(result, first) === 0)) continue;
+    const refund = Math.min(state.pot, Math.floor(result.player.totalContrib / 2));
+    if (refund <= 0) continue;
+    result.player.chips += refund;
+    result.showdownGain += refund;
+    result.lastFoldRefund = refund;
+    state.pot -= refund;
+  }
 }
 
 function playHumanShowdownResultSound(results) {
