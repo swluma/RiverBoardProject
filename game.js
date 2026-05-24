@@ -837,8 +837,14 @@ async function playShowdownAnimation(token, results) {
 function waitForTutorialShowdownPause(index, token) {
   if (!isCurrentShowdownAnimation(token)) return Promise.resolve(false);
   showTutorialStep(index);
+  tutorial.waitingForShowdownPause = true;
+  updateTutorialNextButton();
   return new Promise(resolve => {
-    tutorial.pauseResolver = () => resolve(isCurrentShowdownAnimation(token));
+    tutorial.pauseResolver = () => {
+      tutorial.waitingForShowdownPause = false;
+      updateTutorialNextButton();
+      resolve(isCurrentShowdownAnimation(token));
+    };
   });
 }
 
@@ -1790,20 +1796,31 @@ function tutorialStepConfig(index) {
 function showTutorialStep(index) {
   if (!tutorial?.active) return;
   tutorial.index = index;
+  tutorial.waitingForShowdownPause = false;
   ensureTutorialUi();
   const text = TUTORIAL_TEXTS[index] || 'Tutorial complete.';
   document.getElementById('tutorialText').textContent = `(${index + 1}/${TUTORIAL_TEXTS.length}) ${text}`;
   const config = tutorialStepConfig(index);
   tutorial.focus = config.focus;
   tutorial.allow = config.allow;
-  const next = document.getElementById('tutorialNext');
-  next.classList.toggle('hidden', !!config.wait);
-  next.textContent = index >= TUTORIAL_TEXTS.length - 1 ? 'Finish' : 'Next';
+  tutorial.stepWaitsForAction = !!config.wait;
+  updateTutorialNextButton();
   refreshTutorialFocus();
+}
+
+function updateTutorialNextButton() {
+  const next = document.getElementById('tutorialNext');
+  if (!next || !tutorial?.active) return;
+  const waitingForAction = tutorial.stepWaitsForAction && !tutorial.waitingForShowdownPause;
+  const blockedByShowdown = isCurrentShowdownAnimation(showdownAnimationToken) && !tutorial.waitingForShowdownPause;
+  next.classList.toggle('hidden', waitingForAction || blockedByShowdown);
+  next.disabled = blockedByShowdown;
+  next.textContent = tutorial.index >= TUTORIAL_TEXTS.length - 1 ? 'Finish' : 'Next';
 }
 
 function tutorialNext() {
   if (!tutorial?.active) return;
+  if (isCurrentShowdownAnimation(showdownAnimationToken) && !tutorial.waitingForShowdownPause) return;
   if (tutorial.pauseResolver) {
     const resolve = tutorial.pauseResolver;
     tutorial.pauseResolver = null;
@@ -2668,7 +2685,7 @@ function renderResults() {
 }
 
 function resultActionButtons() {
-  if (tutorial?.active) {
+  if (tutorial?.active || state?.tutorial) {
     return `
       <div class="result-actions">
         <button id="leaveTutorialButton" class="primary-button tutorial-leave-button" type="button">Leave</button>
