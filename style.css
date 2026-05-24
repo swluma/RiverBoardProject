@@ -2797,6 +2797,70 @@ body.fallback-fullscreen #app {
   }
 }
 
+/* Wider screens get proportional panels instead of the compact iPhone-first sizing. */
+@media (min-width: 900px) and (min-height: 520px) {
+  .table-area {
+    --side-info-w: clamp(190px, 20vw, 248px);
+    --bottom-hand-w: clamp(310px, 31vw, 440px);
+    --play-w: clamp(330px, 32vw, 500px);
+    --bottom-gap: 18px;
+  }
+  .oval-table {
+    width: min(88vw, 1120px);
+    height: min(61vh, 500px);
+  }
+  .info-card {
+    min-height: 124px;
+    padding: 10px 12px;
+  }
+  .info-human {
+    left: clamp(18px, 4vw, 72px);
+    bottom: var(--bottom-gap);
+  }
+  .cards-human {
+    left: calc(clamp(18px, 4vw, 72px) + var(--side-info-w) + 18px);
+    bottom: var(--bottom-gap);
+  }
+  .play-panel {
+    right: clamp(18px, 4vw, 72px);
+    width: var(--play-w);
+    height: var(--play-panel-height, clamp(210px, 31vh, 356px));
+  }
+  .play-panel.collapsed {
+    width: 154px;
+  }
+  .play-panel .play-body {
+    gap: 12px;
+    padding: 10px 12px 12px;
+  }
+  .play-panel .special-buttons {
+    gap: 8px;
+  }
+  .cards-top-left,
+  .cards-top,
+  .cards-top-right {
+    width: var(--side-info-w);
+  }
+  .cards-top-left .field-cards,
+  .cards-top .field-cards,
+  .cards-top-right .field-cards {
+    min-height: 76px;
+    padding: 7px 8px;
+  }
+  .cards-top-left {
+    left: clamp(18px, 4vw, 72px);
+  }
+  .cards-top-right {
+    right: clamp(18px, 4vw, 72px);
+  }
+  .info-top-left {
+    left: clamp(18px, 4vw, 72px);
+  }
+  .info-top-right {
+    right: clamp(18px, 4vw, 72px);
+  }
+}
+
 /* Table clearance: keep the seats on the felt away from top player panels and stats. */
 .oval-table {
   top: 51%;
