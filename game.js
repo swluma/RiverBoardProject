@@ -238,6 +238,9 @@ let showdownAnimationTimers = [];
 let audioContext = null;
 let coinSoundTemplate = null;
 let cardSoundTemplate = null;
+let foldSoundTemplate = null;
+let winSoundTemplate = null;
+let failureSoundTemplate = null;
 let tutorial = null;
 let tutorialCpuTimerDelay = 0;
 const handRevealCardIds = new Set();
@@ -669,6 +672,7 @@ function chooseLastFold(player, choice) {
   if (player.allIn && choice === 'lastFold') return;
   player.lastFoldChoice = choice;
   player.lastFolded = choice === 'lastFold';
+  if (choice === 'lastFold') playSound('fold');
   pulse(`${player.name} chose ${choice === 'lastFold' ? 'Last Fold' : 'Continue'}.`);
   if (allLastFoldChoicesMade()) {
     finishLastFold();
@@ -826,6 +830,7 @@ async function playShowdownAnimation(token, results) {
   }
   if (tutorial?.active && !await waitForTutorialShowdownPause(49, token)) return;
   showdownAnimation.activeRankPlayerId = null;
+  playHumanShowdownResultSound(showdownAnimation.results);
 
   if (!await waitForShowdownStep(animateShowdownPayout(), token)) return;
   if (!await waitForShowdownStep(SHOWDOWN_INTERVAL, token)) return;
@@ -869,6 +874,16 @@ function canPublishShowdownResult(result) {
 
 function canPublishShowdownPlayer(player) {
   return !!player && !player.folded;
+}
+
+function playHumanShowdownResultSound(results) {
+  if (isPointMode()) return;
+  const human = results.find(result => result.player.id === 0);
+  const candidates = results.filter(result => result.candidate);
+  if (!human || candidates.length === 0) return;
+  const winner = candidates.slice().sort(compareResults)[0];
+  const humanWonPot = human.candidate && compareResults(human, winner) === 0;
+  playSound(humanWonPot ? 'win' : 'failure');
 }
 
 function showdownChipDeltaFor(result) {
@@ -963,6 +978,7 @@ function normalAction(player, action) {
     player.actedThisRound = true;
     player.normalAction = 'Fold';
     cpuNormalActionPulseIds.add(player.id);
+    playSound('fold');
     pulse(`${player.name} folded.`);
     nextTurn(idx);
     if (player.id === 0) tutorialAdvanceFrom('normal:fold');
@@ -1739,7 +1755,8 @@ function tutorialStepConfig(index) {
   const focusOnly = {
     8: '[data-claim="twoPair"]',
     9: '[data-claim="fullHouse"]',
-    14: '[data-special]',
+    13: '[data-special]',
+    14: '[data-special="exchange"]',
     20: '#marketCards',
     21: '.info-top-right .action-icons',
     22: '[data-special="market"]',
@@ -2962,9 +2979,29 @@ function playAudioSample(type, delay = 0) {
       cardSoundTemplate = new Audio('assets/card-take.mp3');
       cardSoundTemplate.preload = 'auto';
     }
-    const template = type === 'coin' ? coinSoundTemplate : cardSoundTemplate;
+    if (type === 'fold' && !foldSoundTemplate) {
+      foldSoundTemplate = new Audio('assets/fold.mp3');
+      foldSoundTemplate.preload = 'auto';
+    }
+    if (type === 'win' && !winSoundTemplate) {
+      winSoundTemplate = new Audio('assets/win.mp3');
+      winSoundTemplate.preload = 'auto';
+    }
+    if (type === 'failure' && !failureSoundTemplate) {
+      failureSoundTemplate = new Audio('assets/failure.mp3');
+      failureSoundTemplate.preload = 'auto';
+    }
+    const templates = {
+      coin: coinSoundTemplate,
+      card: cardSoundTemplate,
+      fold: foldSoundTemplate,
+      win: winSoundTemplate,
+      failure: failureSoundTemplate,
+    };
+    const template = templates[type];
+    if (!template) return;
     const sound = template.cloneNode();
-    sound.volume = type === 'coin' ? 0.45 : 0.42;
+    sound.volume = type === 'coin' ? 0.45 : type === 'card' ? 0.42 : 0.6;
     sound.play().catch(() => {});
   };
   if (delay > 0) setTimeout(play, delay);
@@ -2978,6 +3015,10 @@ function playSound(type, delay = 0) {
   }
   if (type === 'card') {
     playCardSound(delay);
+    return;
+  }
+  if (type === 'fold' || type === 'win' || type === 'failure') {
+    playAudioSample(type, delay);
     return;
   }
   const ctx = getAudioContext();
