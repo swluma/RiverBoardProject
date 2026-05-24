@@ -163,6 +163,7 @@ body.room-setup-visible #gameScreen {
   box-shadow: none;
 }
 .lobby-dialog {
+  position: relative;
   width: min(460px, calc(100vw - 24px));
   border: 1px solid var(--line);
   border-radius: 18px;
