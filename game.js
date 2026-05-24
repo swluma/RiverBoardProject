@@ -977,6 +977,12 @@ function openLobbyDialog() {
   if (!els.lobbyDialog.open) els.lobbyDialog.showModal();
 }
 
+function closeLobbyDialog(event = null) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  els.lobbyDialog?.close();
+}
+
 async function copyLobbyCode() {
   const code = hub.session.roomCode || '';
   if (!code) return;
@@ -4107,7 +4113,8 @@ document.addEventListener('click', event => {
 }, true);
 els.startButton.addEventListener('click', startTable);
 els.roomButton?.addEventListener('click', openLobbyDialog);
-els.closeLobby?.addEventListener('click', () => els.lobbyDialog?.close());
+els.closeLobby?.addEventListener('pointerdown', closeLobbyDialog);
+els.closeLobby?.addEventListener('click', closeLobbyDialog);
 els.copyLobbyCode?.addEventListener('click', copyLobbyCode);
 els.lobbyStartButton?.addEventListener('click', requestRoomStart);
 els.lobbyReadyButton?.addEventListener('click', toggleReady);

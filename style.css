@@ -936,6 +936,10 @@ body.tutorial-mode dialog[open] {
   width: 32px; height: 32px;
   padding: 0;
   border-radius: 50%;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  line-height: 1;
 }
 .rules-list { display: grid; gap: 6px; margin-top: 12px; }
 .rule-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 12px; background: rgba(255,255,255,0.07); }
