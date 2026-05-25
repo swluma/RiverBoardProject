@@ -3870,7 +3870,8 @@ function canUseResultButtons() {
   const hostId = hub.room?.hostId || orderedHubPlayers()[0]?.id || null;
   const hostInGame = state?.players?.some(player => player.hubPlayerId === hostId);
   if (hostInGame) return hub.session.playerId === hostId;
-  return !!state?.players?.length && state.players[0].hubPlayerId === hub.session.playerId;
+  const firstHuman = state?.players?.find(player => !player.isCpu && player.hubPlayerId);
+  return !!firstHuman && firstHuman.hubPlayerId === hub.session.playerId;
 }
 
 function bindResultActions() {
