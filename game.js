@@ -462,19 +462,44 @@ function currentMemberSlots() {
 
 function renderMemberSlots() {
   if (!els.memberSlots) return;
-  els.memberSlots.innerHTML = currentMemberSlots().map(slot => `
-    <div class="member-slot-wrap">
-      <button class="member-slot member-${slot.kind}" type="button" data-member-index="${slot.index}" ${canEditMemberSlot(slot) ? '' : 'disabled'}>
-        <span class="member-icon">${escapeHtml(slot.icon)}</span>
-        <span class="member-name">${escapeHtml(slot.name)}</span>
-        <span class="member-ready ${slot.ready ? 'ready' : ''}">${slot.kind === 'none' ? 'None' : slot.ready ? 'Ready' : 'Not ready'}</span>
-      </button>
-      ${slot.isLocalHuman && !slot.isHostSlot ? `<button class="member-ready-button ${slot.ready ? 'ready' : ''}" type="button" data-ready-index="${slot.index}">${slot.ready ? 'Ready' : 'Ready?'}</button>` : ''}
-      ${slot.isLocalHuman && slot.isHostSlot && !hub.session.isRoomPlay ? `<button class="member-ready-button ${slot.ready ? 'ready' : ''}" type="button" data-ready-index="${slot.index}">${slot.ready ? 'Ready' : 'Ready?'}</button>` : ''}
-    </div>
-  `).join('');
+  const slots = currentMemberSlots();
+  const nodes = slots.map(slot => {
+    const wrap = document.createElement('div');
+    wrap.className = 'member-slot-wrap';
+
+    const button = document.createElement('button');
+    button.className = `member-slot member-${slot.kind}`;
+    button.type = 'button';
+    button.dataset.memberIndex = String(slot.index);
+    button.disabled = !canEditMemberSlot(slot);
+
+    const icon = document.createElement('span');
+    icon.className = 'member-icon';
+    icon.textContent = slot.icon;
+    const name = document.createElement('span');
+    name.className = 'member-name';
+    name.textContent = slot.name;
+    const ready = document.createElement('span');
+    ready.className = `member-ready ${slot.ready ? 'ready' : ''}`;
+    ready.textContent = slot.kind === 'none' ? 'None' : slot.ready ? 'Ready' : 'Not ready';
+
+    button.append(icon, name, ready);
+    wrap.appendChild(button);
+
+    const showsReadyButton = slot.isLocalHuman && (!slot.isHostSlot || !hub.session.isRoomPlay);
+    if (showsReadyButton) {
+      const readyButton = document.createElement('button');
+      readyButton.className = `member-ready-button ${slot.ready ? 'ready' : ''}`;
+      readyButton.type = 'button';
+      readyButton.dataset.readyIndex = String(slot.index);
+      readyButton.textContent = slot.ready ? 'Ready' : 'Ready?';
+      wrap.appendChild(readyButton);
+    }
+    return wrap;
+  });
+  els.memberSlots.replaceChildren(...nodes);
   if (els.startButton && !hub.session.isRoomPlay) {
-    els.startButton.disabled = !canStartWithCurrentMembers();
+    els.startButton.disabled = slots.filter(slot => slot.kind !== 'none').length < 2;
   }
 }
 
