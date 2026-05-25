@@ -313,6 +313,12 @@ body.room-setup-visible #gameScreen {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
+.member-slot-wrap {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 32px;
+  gap: 6px;
+}
 .member-slot {
   min-width: 0;
   aspect-ratio: 1;
@@ -362,6 +368,21 @@ body.room-setup-visible #gameScreen {
 .member-ready.ready {
   background: rgba(157, 242, 188, 0.16);
   color: var(--good);
+}
+.member-ready-button {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  background: rgba(255,255,255,0.08);
+  color: var(--muted);
+  box-shadow: none;
+}
+.member-ready-button.ready {
+  background: linear-gradient(135deg, #2587ff, #21c4ff);
+  color: #06151d;
 }
 .icon-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .icon-choice { width: 42px; height: 42px; padding: 0; border-radius: 50%; font-size: 1.4rem; background: rgba(255,255,255,0.08); border: 2px solid transparent; }

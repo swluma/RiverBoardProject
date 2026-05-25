@@ -100,7 +100,7 @@ const SHOWDOWN_CARD_FLIP_TIME = 540;
 const SHOWDOWN_POINT_TIME = 500;
 const SHOWDOWN_RANK_TIME = 650;
 const MEMBER_SLOT_COUNT = 4;
-const MEMBER_SLOT_ORDER = ['cpu', 'human', 'none'];
+const MEMBER_SLOT_ORDER = ['cpu', 'none'];
 const HUB_GAME_ID = 'role_board_poker';
 const HUB_ROOM_EVENTS = Object.freeze({
   JOIN_ROOM: 'join_room',
@@ -268,6 +268,7 @@ let state = null;
 let selectedMode = 'chips';
 let localPlayerId = 0;
 let setupMemberKinds = ['human', 'cpu', 'cpu', 'none'];
+let localSetupReady = true;
 let selectedIcon = '🦉';
 let selectedHandIndex = null;
 let selectedMarketIndex = null;
@@ -410,13 +411,20 @@ function makePlayer(id, name, icon, isCpu, chips, color) {
 function makeMemberSlot(kind, index, hubPlayer = null) {
   const isHostSlot = index === 0;
   const meta = hubPlayer ? hub.playerMeta.get(hubPlayer.id) || {} : {};
-  const normalizedKind = isHostSlot ? 'human' : (kind === 'human' || kind === 'none' ? kind : 'cpu');
+  const normalizedKind = isHostSlot && !hub.session.isRoomPlay
+    ? 'human'
+    : (kind === 'human' || kind === 'none' ? kind : 'cpu');
   const isCpu = normalizedKind === 'cpu';
   const isHuman = normalizedKind === 'human';
+  const isLocalHuman = isHuman && (
+    hub.session.isRoomPlay
+      ? hubPlayer?.id === hub.session.playerId
+      : isHostSlot
+  );
   return {
     index,
     kind: normalizedKind,
-    ready: isCpu || isHostSlot || !!hubPlayer?.ready,
+    ready: isCpu || (hub.session.isRoomPlay ? isHostSlot || !!hubPlayer?.ready : !isHuman || localSetupReady),
     name: hubPlayer
       ? sanitizeHubPlayerName(hubPlayer.name) || `Player ${index + 1}`
       : isCpu
@@ -437,6 +445,7 @@ function makeMemberSlot(kind, index, hubPlayer = null) {
     isHostSlot,
     isCpu,
     isHuman,
+    isLocalHuman,
   };
 }
 
@@ -454,16 +463,24 @@ function currentMemberSlots() {
 function renderMemberSlots() {
   if (!els.memberSlots) return;
   els.memberSlots.innerHTML = currentMemberSlots().map(slot => `
-    <button class="member-slot member-${slot.kind}" type="button" data-member-index="${slot.index}" ${canEditMemberSlot(slot) ? '' : 'disabled'}>
-      <span class="member-icon">${escapeHtml(slot.icon)}</span>
-      <span class="member-name">${escapeHtml(slot.name)}</span>
-      <span class="member-ready ${slot.ready ? 'ready' : ''}">${slot.kind === 'none' ? 'None' : slot.ready ? 'Ready' : 'Not ready'}</span>
-    </button>
+    <div class="member-slot-wrap">
+      <button class="member-slot member-${slot.kind}" type="button" data-member-index="${slot.index}" ${canEditMemberSlot(slot) ? '' : 'disabled'}>
+        <span class="member-icon">${escapeHtml(slot.icon)}</span>
+        <span class="member-name">${escapeHtml(slot.name)}</span>
+        <span class="member-ready ${slot.ready ? 'ready' : ''}">${slot.kind === 'none' ? 'None' : slot.ready ? 'Ready' : 'Not ready'}</span>
+      </button>
+      ${slot.isLocalHuman && !slot.isHostSlot ? `<button class="member-ready-button ${slot.ready ? 'ready' : ''}" type="button" data-ready-index="${slot.index}">${slot.ready ? 'Ready' : 'Ready?'}</button>` : ''}
+      ${slot.isLocalHuman && slot.isHostSlot && !hub.session.isRoomPlay ? `<button class="member-ready-button ${slot.ready ? 'ready' : ''}" type="button" data-ready-index="${slot.index}">${slot.ready ? 'Ready' : 'Ready?'}</button>` : ''}
+    </div>
   `).join('');
+  if (els.startButton && !hub.session.isRoomPlay) {
+    els.startButton.disabled = !canStartWithCurrentMembers();
+  }
 }
 
 function canEditMemberSlot(slot) {
-  if (!slot || slot.isHostSlot) return false;
+  if (!slot) return false;
+  if (!hub.session.isRoomPlay && slot.isHostSlot) return false;
   if (!hub.session.isRoomPlay) return true;
   if (slot.hubPlayerId === hub.session.playerId) return true;
   return hub.session.isHost && !slot.hubPlayerId;
@@ -486,6 +503,14 @@ function cycleMemberSlot(index) {
   setupMemberKinds[index] = next;
   renderMemberSlots();
   publishSetupSync();
+}
+
+function activeMemberSlots() {
+  return currentMemberSlots().filter(slot => slot.kind !== 'none');
+}
+
+function canStartWithCurrentMembers() {
+  return activeMemberSlots().length >= 2;
 }
 
 function createInitialState(cpuCount, startingChips, baseBet) {
@@ -555,7 +580,7 @@ function createInitialState(cpuCount, startingChips, baseBet) {
     publicActionText: 'Public actions appear here.',
     finalResults: [],
     showdownPayout: null,
-    animationSync: { handRevealCardIds: [], peekFlipCardIds: [], normalActionPulseIds: [], marketRevealCardId: null },
+    animationSync: emptyAnimationSync(),
     version: 0,
   };
 }
@@ -581,7 +606,7 @@ function localPlayer() {
     const current = state.players[state.currentPlayerIndex];
     if (current && !current.isCpu) return current;
   }
-  return state.players.find(player => player.id === localPlayerId) || state.players[0] || null;
+  return state.players.find(player => player.id === localPlayerId) || null;
 }
 
 function isLocalPlayer(player) {
@@ -640,7 +665,7 @@ function cloneGameStateForGuests() {
   snapshot.stock = snapshot.stock.map((_, index) => ({ id: `stock-${index}`, hidden: true }));
   snapshot.reservedMarket = snapshot.reservedMarket.map((_, index) => ({ id: `reserved-${index}`, hidden: true }));
   snapshot.players = snapshot.players.map(player => {
-    if (player.id === 1 || snapshot.phase === 'result' || snapshot.phase === 'showdown' || snapshot.phase === 'final') return player;
+    if ((!player.isCpu && player.hubPlayerId && player.hubPlayerId !== hub.room?.hostId) || snapshot.phase === 'result' || snapshot.phase === 'showdown' || snapshot.phase === 'final') return player;
     const publicIds = new Set(player.publicHandCardIds || []);
     return {
       ...player,
@@ -691,7 +716,7 @@ function applySnapshot(snapshot) {
   clearInterval(lastFoldInterval);
   state = snapshot.state;
   applyAnimationSync(snapshot.animation);
-  localPlayerId = hubSeatForPlayerId(hub.session.playerId);
+  localPlayerId = state.players.findIndex(player => player.hubPlayerId === hub.session.playerId);
   resetSelections();
   document.body.classList.remove('room-setup-visible');
   els.setupScreen.classList.add('hidden');
@@ -701,6 +726,7 @@ function applySnapshot(snapshot) {
     startShowdownAnimation(state.finalResults);
   } else {
     render();
+    if (!hub.session.isHost && state.phase === 'lastFold') startLastFoldDisplayTimer();
   }
   hub.applyingRemote = false;
 }
@@ -712,6 +738,9 @@ function currentAnimationSync() {
     peekFlipCardIds: [...new Set([...(queued.peekFlipCardIds || []), ...Array.from(peekFlipCardIds)])],
     normalActionPulseIds: [...new Set([...(queued.normalActionPulseIds || []), ...Array.from(cpuNormalActionPulseIds)])],
     marketRevealCardId: queued.marketRevealCardId || marketRevealCardId,
+    openingDealDelays: queued.openingDealDelays || Array.from(openingDealDelayByCardId.entries()).map(([cardId, delay]) => ({ cardId, delay })),
+    visualEvents: queued.visualEvents || [],
+    soundEvents: queued.soundEvents || [],
   };
 }
 
@@ -726,18 +755,42 @@ function applyAnimationSync(animation = {}) {
   peekIds.forEach(id => peekFlipCardIds.add(id));
   actionIds.forEach(id => cpuNormalActionPulseIds.add(id));
   marketRevealCardId = animation.marketRevealCardId || null;
+  openingDealDelayByCardId.clear();
+  (animation.openingDealDelays || []).forEach(entry => {
+    if (entry?.cardId !== undefined) openingDealDelayByCardId.set(entry.cardId, Number(entry.delay) || 0);
+  });
   if (!hub.session.isHost && (handIds.length || peekIds.length || marketRevealCardId)) playSound('card');
   if (!hub.session.isHost && actionIds.length) {
     const folded = state?.players?.some(player => actionIds.includes(player.id) && player.normalAction === 'Fold');
     playSound(folded ? 'fold' : 'coin');
   }
+  if (!hub.session.isHost) {
+    (animation.visualEvents || []).forEach(event => {
+      if (event?.type === 'bet') animateBetToPot(event.payload?.playerId, event.payload?.amount, event.payload?.action);
+      if (event?.type === 'discard') animateDiscardDrop();
+      if (event?.type === 'stockDraw') animateStockDraw();
+    });
+    (animation.soundEvents || []).forEach(event => {
+      if (event?.type) playSound(event.type, Number(event.delay) || 0);
+    });
+  }
+}
+
+function emptyAnimationSync() {
+  return {
+    handRevealCardIds: [],
+    peekFlipCardIds: [],
+    normalActionPulseIds: [],
+    marketRevealCardId: null,
+    openingDealDelays: [],
+    visualEvents: [],
+    soundEvents: [],
+  };
 }
 
 function noteAnimationSync(kind, value) {
   if (!state) return;
-  if (!state.animationSync) {
-    state.animationSync = { handRevealCardIds: [], peekFlipCardIds: [], normalActionPulseIds: [], marketRevealCardId: null };
-  }
+  if (!state.animationSync) state.animationSync = emptyAnimationSync();
   if (kind === 'marketRevealCardId') {
     state.animationSync.marketRevealCardId = value;
     return;
@@ -746,16 +799,26 @@ function noteAnimationSync(kind, value) {
   if (Array.isArray(list) && value !== undefined && !list.includes(value)) list.push(value);
 }
 
+function noteVisualAnimation(type, payload = {}) {
+  if (!isRoomHost() || !state || hub.applyingRemote) return;
+  if (!state.animationSync) state.animationSync = emptyAnimationSync();
+  state.animationSync.visualEvents.push({ type, payload });
+}
+
+function noteSoundAnimation(type, delay = 0) {
+  if (!isRoomHost() || !state || hub.applyingRemote) return;
+  if (!state.animationSync) state.animationSync = emptyAnimationSync();
+  state.animationSync.soundEvents.push({ type, delay });
+}
+
 function clearStateAnimationSync() {
   if (!state?.animationSync) return;
-  state.animationSync = { handRevealCardIds: [], peekFlipCardIds: [], normalActionPulseIds: [], marketRevealCardId: null };
+  state.animationSync = emptyAnimationSync();
 }
 
 function validateSeatAction(action, player) {
   if (!action || !player) return false;
-  if (hubSeatForPlayerId(action.playerId) !== player.id) return false;
-  if (player.hubPlayerId && player.hubPlayerId !== action.playerId) return false;
-  return true;
+  return !!player.hubPlayerId && player.hubPlayerId === action.playerId;
 }
 
 function applyAuthoritativeAction(action) {
@@ -1048,6 +1111,7 @@ function renderLobby() {
 }
 
 function startRoomGameAsHost() {
+  if (!canStartWithCurrentMembers()) return;
   syncSetupAmount(els.startingChips, els.startingChipsSlider);
   syncSetupAmount(els.baseBet, els.baseBetSlider);
   syncSetupAmount(els.maxGames, els.maxGamesSlider);
@@ -1064,7 +1128,7 @@ function startRoomGameAsHost() {
 }
 
 function requestRoomStart() {
-  if (!hub.session.isHost) return;
+  if (!hub.session.isHost || !canHostStartRoom()) return;
   sendHubAction(HUB_ACTION_TYPES.SETUP, currentSetupPayload());
   hubSend(HUB_ROOM_EVENTS.START_GAME, {
     roomCode: hub.session.roomCode,
@@ -1096,6 +1160,11 @@ async function copyLobbyCode() {
 }
 
 function toggleReady() {
+  if (!hub.session.isRoomPlay) {
+    localSetupReady = !localSetupReady;
+    renderMemberSlots();
+    return;
+  }
   if (hub.session.isHost) return;
   hub.ready = !hub.ready;
   hubSend(HUB_ROOM_EVENTS.PLAYER_READY, {
@@ -1131,7 +1200,7 @@ function applySetupPayload(payload = {}) {
   setSetupValue(els.foldWinPoints, els.foldWinPointsSlider, payload.foldWinPoints);
   if (Array.isArray(payload.memberKinds)) {
     setupMemberKinds = Array.from({ length: MEMBER_SLOT_COUNT }, (_, index) => (
-      index === 0 ? 'human' : ['human', 'cpu', 'none'].includes(payload.memberKinds[index]) ? payload.memberKinds[index] : 'none'
+      index === 0 ? 'human' : ['cpu', 'none'].includes(payload.memberKinds[index]) ? payload.memberKinds[index] : 'none'
     ));
     renderMemberSlots();
   }
@@ -1208,6 +1277,7 @@ function canHostStartRoom() {
   const hostId = hub.room?.hostId || players[0]?.id || null;
   return hub.session.isHost
     && hub.connected
+    && canStartWithCurrentMembers()
     && players.length >= 2
     && players.every(player => player.id === hostId || player.ready);
 }
@@ -1217,6 +1287,11 @@ function startTable() {
     requestRoomStart();
     return;
   }
+  if (!canStartWithCurrentMembers()) {
+    els.startButton.title = 'Choose at least two members before starting.';
+    return;
+  }
+  els.startButton.title = '';
   clearCpuTimers();
   tutorial = null;
   document.body.classList.remove('tutorial-mode');
@@ -1243,6 +1318,12 @@ function startTutorial() {
   selectedMode = 'chips';
   tutorial = { active: true, index: 0, allow: null, focus: null, cpuRound2Raised: false };
   state = createInitialState(2, 100, 5);
+  state.players = [
+    makePlayer(0, (els.playerName.value || 'You').trim().slice(0, 14) || 'You', selectedIcon, false, 100, PLAYER_COLORS[0]),
+    makePlayer(1, CPU_NAMES[0] || 'CPU 1', CPU_ICONS[0] || 'CPU', true, 100, PLAYER_COLORS[1]),
+    makePlayer(2, CPU_NAMES[1] || 'CPU 2', CPU_ICONS[1] || 'CPU', true, 100, PLAYER_COLORS[2]),
+  ];
+  localPlayerId = 0;
   selectedMode = setupMode;
   state.tutorial = true;
   state.mode = 'chips';
@@ -1478,9 +1559,9 @@ function awardEarlyWin() {
 function beginLastFold() {
   clearCpuTimers();
   state.phase = 'lastFold';
+  state.lastFoldEndsAt = Date.now() + 7000;
   for (const p of state.players) p.lastFoldChoice = p.out ? 'out' : p.folded ? 'folded' : p.allIn ? 'continue' : null;
-  let time = 7;
-  els.lastFoldTimer.textContent = time;
+  updateLastFoldTimerText();
   render();
   if (tutorial?.active) {
     state.players[1].lastFoldChoice = 'lastFold';
@@ -1490,11 +1571,11 @@ function beginLastFold() {
     showTutorialStep(42);
     return;
   }
+  publishSnapshot('last_fold_started');
   for (const p of state.players.filter(p => p.isCpu && !p.out && !p.folded && !p.allIn)) cpuLastFoldDecision(p);
   clearInterval(lastFoldInterval);
   lastFoldInterval = setInterval(() => {
-    time -= 1;
-    els.lastFoldTimer.textContent = time;
+    const time = updateLastFoldTimerText();
     if (time <= 0) {
       clearInterval(lastFoldInterval);
       finishLastFold();
@@ -1527,9 +1608,31 @@ function allLastFoldChoicesMade() {
   return state.players.every(player => player.out || player.folded || !!player.lastFoldChoice);
 }
 
+function updateLastFoldTimerText() {
+  const fallback = 7;
+  const remaining = state?.lastFoldEndsAt
+    ? Math.max(0, Math.ceil((state.lastFoldEndsAt - Date.now()) / 1000))
+    : fallback;
+  if (els.lastFoldTimer) els.lastFoldTimer.textContent = remaining;
+  return remaining;
+}
+
+function startLastFoldDisplayTimer() {
+  clearInterval(lastFoldInterval);
+  updateLastFoldTimerText();
+  lastFoldInterval = setInterval(() => {
+    if (!state || state.phase !== 'lastFold') {
+      clearInterval(lastFoldInterval);
+      return;
+    }
+    updateLastFoldTimerText();
+  }, 250);
+}
+
 function finishLastFold() {
   if (!state || state.phase !== 'lastFold') return;
   clearCpuTimers();
+  state.lastFoldEndsAt = null;
   for (const p of state.players) {
     if (!p.out && !p.folded && !p.lastFoldChoice) p.lastFoldChoice = 'continue';
   }
@@ -3406,6 +3509,10 @@ function openClaimBoard() {
 
 function renderClaimBoardOptions() {
   const human = localPlayer();
+  if (!human) {
+    els.claimBoardOptions.innerHTML = '';
+    return;
+  }
   const actualRole = evaluatePlayerHand(human).role;
   const options = CLAIM_OPTIONS.map(claim => {
     const selected = claim.key === (human.pendingClaim || 'none');
@@ -3481,6 +3588,7 @@ function renderLastFoldPanel() {
   const visible = state.phase === 'lastFold';
   els.lastFoldPanel.classList.toggle('hidden', !visible);
   if (!visible) return;
+  updateLastFoldTimerText();
   els.lastFoldChoices.innerHTML = '';
   for (const p of state.players.filter(p => !p.out && !p.folded)) {
     const choice = p.lastFoldChoice || 'thinking';
@@ -3490,8 +3598,8 @@ function renderLastFoldPanel() {
     els.lastFoldChoices.appendChild(pill);
   }
   const human = localPlayer();
-  els.continueButton.disabled = human.out || !!human.lastFoldChoice || human.folded;
-  els.lastFoldButton.disabled = human.out || !!human.lastFoldChoice || human.folded || human.allIn;
+  els.continueButton.disabled = !human || human.out || !!human.lastFoldChoice || human.folded;
+  els.lastFoldButton.disabled = !human || human.out || !!human.lastFoldChoice || human.folded || human.allIn;
 }
 
 function renderResults() {
@@ -3555,14 +3663,21 @@ function resultActionButtons() {
     `;
   }
   const nextLabel = isMatchOver() ? 'Final Results' : 'Next Game';
-  const nextDisabled = hub.session.isRoomPlay && !hub.session.isHost ? 'disabled' : '';
-  const quitDisabled = hub.session.isRoomPlay && !hub.session.isHost ? 'disabled' : '';
+  const disabled = hub.session.isRoomPlay && !canUseResultButtons() ? 'disabled' : '';
   return `
     <div class="result-actions">
-      <button id="nextGameButton" class="primary-button" type="button" ${nextDisabled}>${nextLabel}</button>
-      <button id="quitGameButton" class="danger-button" type="button" ${quitDisabled}>Quit</button>
+      <button id="nextGameButton" class="primary-button" type="button" ${disabled}>${nextLabel}</button>
+      <button id="quitGameButton" class="danger-button" type="button" ${disabled}>Quit</button>
     </div>
   `;
+}
+
+function canUseResultButtons() {
+  if (!hub.session.isRoomPlay) return true;
+  const hostId = hub.room?.hostId || orderedHubPlayers()[0]?.id || null;
+  const hostInGame = state?.players?.some(player => player.hubPlayerId === hostId);
+  if (hostInGame) return hub.session.playerId === hostId;
+  return !!state?.players?.length && state.players[0].hubPlayerId === hub.session.playerId;
 }
 
 function bindResultActions() {
@@ -3573,7 +3688,7 @@ function bindResultActions() {
 
 function requestNextGame() {
   if (hub.session.isRoomPlay) {
-    if (hub.session.isHost) {
+    if (canUseResultButtons()) {
       startNewGame();
       publishSnapshot('next_game');
     }
@@ -3669,6 +3784,7 @@ function formatChipDelta(delta) {
 }
 
 function openQuitDialog() {
+  if (hub.session.isRoomPlay && !canUseResultButtons()) return;
   if (!els.quitDialog.open) els.quitDialog.showModal();
 }
 
@@ -3744,6 +3860,7 @@ function playerFieldNodeCenter(playerId, selector) {
 }
 
 function animateBetToPot(playerId, amount, action = 'call') {
+  noteVisualAnimation('bet', { playerId, amount, action });
   const donor = playerIconCenter(playerId);
   const table = document.querySelector('.oval-table')?.getBoundingClientRect();
   const area = els.tableArea.getBoundingClientRect();
@@ -3768,7 +3885,7 @@ function animateBetToPot(playerId, amount, action = 'call') {
     chip.style.setProperty('--bet-arc', `${-18 - lane * 8 - wave * 5}px`);
     const delay = wave * 110 + lane * 72;
     chip.style.animationDelay = `${delay}ms`;
-    playSound('coin', delay);
+    playSound('coin', delay, false);
     els.tableArea.appendChild(chip);
     chip.addEventListener('animationend', () => chip.remove(), { once: true });
   }
@@ -3954,7 +4071,8 @@ function playAudioSample(type, delay = 0) {
   else play();
 }
 
-function playSound(type, delay = 0) {
+function playSound(type, delay = 0, sync = true) {
+  if (sync) noteSoundAnimation(type, delay);
   if (type === 'coin') {
     playCoinSound(delay);
     return;
@@ -3992,6 +4110,7 @@ function playSound(type, delay = 0) {
 }
 
 function animateDiscardDrop() {
+  noteVisualAnimation('discard');
   const pile = document.querySelector('.discard-pile');
   if (!pile) return;
   const angle = Math.random() * Math.PI * 2;
@@ -4006,13 +4125,14 @@ function animateDiscardDrop() {
 }
 
 function animateStockDraw() {
+  noteVisualAnimation('stockDraw');
   const pile = document.querySelector('.stock-pile');
   if (!pile) return;
   const now = performance.now();
   const start = Math.max(now, stockDrawNextStart);
   const delay = Math.max(0, start - now);
   stockDrawNextStart = start + 180;
-  playSound('card', delay);
+  playSound('card', delay, false);
   const card = document.createElement('div');
   card.className = 'mini-card-back stock-draw-flight';
   card.style.animationDelay = `${Math.round(delay)}ms`;
@@ -4231,6 +4351,13 @@ els.lobbyReadyButton?.addEventListener('click', toggleReady);
 els.tutorialButton.addEventListener('click', startTutorial);
 els.playerName.addEventListener('input', renderMemberSlots);
 els.memberSlots?.addEventListener('click', event => {
+  const readyButton = event.target.closest('[data-ready-index]');
+  if (readyButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleReady();
+    return;
+  }
   const button = event.target.closest('[data-member-index]');
   if (!button) return;
   cycleMemberSlot(Number(button.dataset.memberIndex));
@@ -4266,7 +4393,7 @@ els.cancelQuitButton.addEventListener('click', () => els.quitDialog.close());
 els.confirmQuitButton.addEventListener('click', () => {
   els.quitDialog.close();
   if (hub.session.isRoomPlay) {
-    if (hub.session.isHost) {
+    if (canUseResultButtons()) {
       endGame('Game ended by the host.');
       publishSnapshot('quit');
     }
