@@ -263,6 +263,16 @@ body.room-setup-visible #gameScreen {
   background: rgba(157, 242, 188, 0.16);
   color: var(--good);
 }
+.lobby-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 215, 106, 0.12);
+  border: 1px solid rgba(255, 215, 106, 0.24);
+  color: #ffe5a5;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
 .lobby-actions {
   min-height: 58px;
   position: relative;

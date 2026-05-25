@@ -259,6 +259,7 @@ const els = {
   copyLobbyCode: document.getElementById('copyLobbyCode'),
   lobbyRoomCode: document.getElementById('lobbyRoomCode'),
   lobbyStatus: document.getElementById('lobbyStatus'),
+  lobbyNotice: document.getElementById('lobbyNotice'),
   lobbyPlayers: document.getElementById('lobbyPlayers'),
   lobbyReadyButton: document.getElementById('lobbyReadyButton'),
   lobbyStartButton: document.getElementById('lobbyStartButton'),
@@ -369,6 +370,7 @@ const hub = {
   heartbeatTimer: null,
   applyingRemote: false,
   lastError: '',
+  notice: '',
   playerMeta: new Map(),
   setup: null,
   pendingResultSnapshot: null,
@@ -650,6 +652,24 @@ function remoteSeatPosition(player) {
   return Math.max(1, remotes.findIndex(candidate => candidate.id === player.id) + 1);
 }
 
+function hasLocalGameSeat() {
+  return !!state?.players?.some(player => player.id === localPlayerId);
+}
+
+function remoteSlotCount() {
+  return Math.max(1, (state?.players?.length || 1) - (hasLocalGameSeat() ? 1 : 0));
+}
+
+function tableSeatSlot(player) {
+  if (isLocalPlayer(player)) return 'human';
+  return getCpuSeatSlots(remoteSlotCount())[remoteSeatPosition(player) - 1] || 'top';
+}
+
+function infoSeatSlot(player) {
+  if (isLocalPlayer(player)) return 'human';
+  return getInfoSlots(remoteSlotCount())[remoteSeatPosition(player) - 1] || 'top';
+}
+
 function isRoomHost() {
   return hub.session.isRoomPlay && hub.session.isHost && !tutorial?.active && !state?.tutorial;
 }
@@ -739,7 +759,10 @@ function publishSnapshot(reason = 'snapshot') {
 function applySnapshot(snapshot) {
   if (!snapshot?.state) return;
   if (!isRenderableGameState(snapshot.state)) {
-    if (hub.session.isRoomPlay && !state) prepareRoomSetup();
+    if (hub.session.isRoomPlay) {
+      if (snapshot.reason === 'play_again_setup') returnToSetupWithCurrentSettings();
+      prepareRoomSetup();
+    }
     return;
   }
   if (!hub.session.isHost && state?.phase === 'showdown' && showdownAnimation && snapshot.state.phase === 'result') {
@@ -884,6 +907,9 @@ function applyAuthoritativeAction(action) {
     startNewGame();
     publishSnapshot('next_game');
     return;
+  } else if (action.type === HUB_ACTION_TYPES.NEXT_GAME && state.phase === 'final') {
+    resetRoomGameToSetup();
+    return;
   } else if (action.type === HUB_ACTION_TYPES.QUIT) {
     endGame('Game ended by the host.');
     changed = true;
@@ -990,6 +1016,7 @@ function connectHubRoom() {
   els.playerName.value = hub.session.playerName;
   localPlayerId = hub.session.isHost ? 0 : 1;
   prepareRoomSetup();
+  openLobbyDialog();
   if (!hub.session.valid) {
     hub.lastError = 'Missing room or WebSocket URL.';
     renderLobby();
@@ -1026,8 +1053,14 @@ function connectHubRoom() {
   hub.socket.addEventListener('close', () => {
     hub.connected = false;
     clearInterval(hub.heartbeatTimer);
-    if (!hub.session.isHost) hub.lastError = hub.lastError || 'Disconnected from the host room.';
+    if (!hub.session.isHost) {
+      hub.lastError = hub.lastError || 'Disconnected from the host room.';
+      hub.notice = hub.notice || 'Host has left the room.';
+    } else {
+      hub.notice = hub.notice || 'Disconnected from the room.';
+    }
     renderLobby();
+    if (els.lobbyDialog && !els.lobbyDialog.open) els.lobbyDialog.showModal();
   });
   hub.socket.addEventListener('error', () => {
     hub.lastError = 'WebSocket connection failed.';
@@ -1059,12 +1092,16 @@ function handleHubMessage(type, payload) {
   }
   if (type === HUB_SERVER_EVENTS.PLAYER_JOINED || type === HUB_SERVER_EVENTS.PLAYER_LEFT || type === HUB_SERVER_EVENTS.PLAYER_READY) {
     const previousHostId = hub.room?.hostId || orderedHubPlayers()[0]?.id || null;
+    const previousPlayers = orderedHubPlayers();
     hub.room = payload.room || hub.room;
     if (type === HUB_SERVER_EVENTS.PLAYER_LEFT) {
       const leftId = payload.playerId || payload.player?.id || payload.id;
+      const leftPlayer = previousPlayers.find(player => player.id === leftId);
+      if (leftId && leftId !== hub.session.playerId) {
+        setRoomNotice(`${sanitizeHubPlayerName(leftPlayer?.name) || (leftId === previousHostId ? 'Host' : 'Guest')} has left the room.`);
+      }
       if (leftId && leftId === previousHostId && leftId !== hub.session.playerId) {
         hub.lastError = 'Host left the room.';
-        pulse('Host left the room.');
       }
     }
     if (hub.session.isHost && state) window.setTimeout(() => publishSnapshot(type), 60);
@@ -1115,6 +1152,7 @@ function handleHubMessage(type, payload) {
   }
   if (type === HUB_SERVER_EVENTS.ROOM_CLOSED) {
     hub.lastError = payload.message || 'Room closed.';
+    hub.notice = hub.lastError;
     hub.connected = false;
     hub.started = false;
     prepareRoomSetup();
@@ -1148,6 +1186,10 @@ function renderLobby() {
   const readyCount = players.filter(player => player.ready).length;
   els.lobbyRoomCode.textContent = hub.session.roomCode || '----';
   els.lobbyStatus.textContent = hub.lastError || `${hub.connected ? 'Connected' : 'Connecting'} · ${readyCount}/${Math.max(2, players.length)} ready`;
+  if (els.lobbyNotice) {
+    els.lobbyNotice.textContent = hub.notice || '';
+    els.lobbyNotice.classList.toggle('hidden', !hub.notice);
+  }
   els.lobbyPlayers.innerHTML = players.length
     ? players.map((player, index) => `
       <article class="lobby-player-card">
@@ -1206,6 +1248,15 @@ function closeLobbyDialog(event = null) {
   event?.preventDefault?.();
   event?.stopPropagation?.();
   els.lobbyDialog?.close();
+}
+
+function setRoomNotice(message) {
+  hub.notice = message || '';
+  if (message) pulse(message);
+  renderLobby();
+  if (message && hub.session.isRoomPlay && els.lobbyDialog && !els.lobbyDialog.open) {
+    els.lobbyDialog.showModal();
+  }
 }
 
 async function copyLobbyCode() {
@@ -2780,9 +2831,10 @@ function ensureTutorialUi() {
     const pop = document.createElement('section');
     pop.className = 'tutorial-popover';
     pop.setAttribute('aria-live', 'polite');
-    pop.innerHTML = '<p id="tutorialText"></p><div class="tutorial-popover-actions"><button id="tutorialNext" class="primary-button" type="button">Next</button></div>';
+    pop.innerHTML = '<p id="tutorialText"></p><div class="tutorial-popover-actions"><button id="tutorialExit" class="danger-button" type="button">Exit Tutorial</button><button id="tutorialNext" class="primary-button" type="button">Next</button></div>';
     document.body.appendChild(pop);
     pop.querySelector('#tutorialNext').addEventListener('click', tutorialNext);
+    pop.querySelector('#tutorialExit').addEventListener('click', interruptTutorial);
   }
 }
 
@@ -2877,6 +2929,12 @@ function tutorialNext() {
     return;
   }
   showTutorialStep(tutorial.index + 1);
+}
+
+function interruptTutorial() {
+  if (!tutorial?.active && !state?.tutorial) return;
+  returnToSetupWithCurrentSettings();
+  if (hub.session.isRoomPlay) prepareRoomSetup();
 }
 
 function clearTutorialFocus() {
@@ -3118,9 +3176,8 @@ function renderMarket() {
 
 function renderSeats() {
   els.seatLayer.innerHTML = '';
-  const cpuSlots = getCpuSeatSlots(state.players.length - 1);
   for (const p of state.players) {
-    const slot = isLocalPlayer(p) ? 'human' : cpuSlots[remoteSeatPosition(p) - 1];
+    const slot = tableSeatSlot(p);
     const seat = document.createElement('div');
     seat.className = `player-field field-${slot}`;
     seat.style.setProperty('--player-color', p.color);
@@ -3265,7 +3322,6 @@ function visibleContributionCoinCount(totalContrib) {
 
 function renderInfoPanels() {
   els.infoLayer.innerHTML = '';
-  const infoSlots = getInfoSlots(state.players.length - 1);
   for (const p of state.players) {
     const key = displayedClaimKey(p);
     const claim = CLAIM_BY_KEY[key] || CLAIM_BY_KEY.none;
@@ -3275,7 +3331,7 @@ function renderInfoPanels() {
       <span class="claim-text role-tone-${claim.rank + 1}">${escapeHtml(claim.label)}</span>
     `;
     const panel = document.createElement('article');
-    const slot = isLocalPlayer(p) ? 'human' : infoSlots[remoteSeatPosition(p) - 1];
+    const slot = infoSeatSlot(p);
     panel.className = `info-card info-${slot} floating-panel${p.out ? ' out inactive' : ''}`;
     if (showdownAnimation?.activeClaimPlayerId === p.id) panel.classList.add('showdown-claim-focus');
     panel.style.setProperty('--player-color', p.color);
@@ -3778,18 +3834,32 @@ function requestNextGame() {
   startNewGame();
 }
 
-function leaveTutorial() {
-  clearCpuTimers();
-  clearShowdownAnimation();
-  resetSelections();
-  clearTutorialFocus();
-  tutorial = null;
-  document.body.classList.remove('tutorial-mode');
-  applyTutorialControlState();
-  els.gameScreen.classList.add('hidden');
-  els.setupScreen.classList.remove('hidden');
+function requestPlayAgain() {
+  if (shouldUseHubActions()) {
+    if (!canUseResultButtons()) return;
+    if (hub.session.isHost) resetRoomGameToSetup();
+    else sendHubAction(HUB_ACTION_TYPES.NEXT_GAME);
+    return;
+  }
+  returnToSetupWithCurrentSettings();
+}
+
+function resetRoomGameToSetup() {
+  if (hub.session.isRoomPlay && hub.connected && state) {
+    sendHubAction(HUB_ACTION_TYPES.SNAPSHOT, {
+      reason: 'play_again_setup',
+      state: { phase: 'setup', players: [] },
+      animation: {},
+    });
+  }
+  returnToSetupWithCurrentSettings();
   if (hub.session.isRoomPlay) prepareRoomSetup();
-  els.resultPanel.classList.add('hidden');
+  publishSetupSync();
+}
+
+function leaveTutorial() {
+  returnToSetupWithCurrentSettings();
+  if (hub.session.isRoomPlay) prepareRoomSetup();
 }
 
 function returnToSetupWithCurrentSettings() {
@@ -3840,6 +3910,7 @@ function renderFinalResults() {
   const tableHeader = pointMode
     ? '<tr><th>Rank</th><th>Player</th><th>Points</th><th>Progress</th><th>Status</th></tr>'
     : '<tr><th>Rank</th><th>Player</th><th>Final 💰</th><th>💰 +/-</th><th>Wins</th><th>Ties</th><th>Status</th></tr>';
+  const playAgainDisabled = shouldUseHubActions() && !canUseResultButtons() ? 'disabled' : '';
   els.finalResultScreen.innerHTML = `
     <div class="final-result-shell">
       <h1>Final Results</h1>
@@ -3853,11 +3924,11 @@ function renderFinalResults() {
         <tbody>${rows}</tbody>
       </table>
       <div class="final-actions">
-        <button id="playAgainButton" class="primary-button" type="button">Play Again</button>
+        <button id="playAgainButton" class="primary-button" type="button" ${playAgainDisabled}>Play Again</button>
       </div>
     </div>
   `;
-  document.getElementById('playAgainButton')?.addEventListener('click', returnToSetupWithCurrentSettings);
+  document.getElementById('playAgainButton')?.addEventListener('click', requestPlayAgain);
 }
 
 function formatChipDelta(delta) {
@@ -3930,7 +4001,8 @@ function playerChipCenter(playerId) {
 }
 
 function playerFieldNodeCenter(playerId, selector) {
-  const slot = playerId === localPlayerId ? 'human' : getCpuSeatSlots(state.players.length - 1)[remoteSeatPosition({ id: playerId }) - 1];
+  const player = state?.players?.find(candidate => candidate.id === playerId) || { id: playerId };
+  const slot = tableSeatSlot(player);
   const rect = document.querySelector(`.field-${slot} ${selector}`)?.getBoundingClientRect();
   const area = els.tableArea.getBoundingClientRect();
   if (!rect) return null;
