@@ -1059,12 +1059,10 @@ function connectHubRoom() {
     clearInterval(hub.heartbeatTimer);
     if (!hub.session.isHost) {
       hub.lastError = hub.lastError || 'Disconnected from the host room.';
-      hub.notice = hub.notice || 'Host has left the room.';
+      setRoomNotice(hub.notice || 'Host has left the room.');
     } else {
-      hub.notice = hub.notice || 'Disconnected from the room.';
+      setRoomNotice(hub.notice || 'Disconnected from the room.');
     }
-    renderLobby();
-    if (els.lobbyDialog && !els.lobbyDialog.open) els.lobbyDialog.showModal();
   });
   hub.socket.addEventListener('error', () => {
     hub.lastError = 'WebSocket connection failed.';
@@ -1160,11 +1158,10 @@ function handleHubMessage(type, payload) {
   }
   if (type === HUB_SERVER_EVENTS.ROOM_CLOSED) {
     hub.lastError = payload.message || 'Room closed.';
-    hub.notice = hub.lastError;
+    setRoomNotice(hub.lastError);
     hub.connected = false;
     hub.started = false;
     prepareRoomSetup();
-    renderLobby();
   }
 }
 
@@ -1269,9 +1266,6 @@ function setRoomNotice(message) {
   showRoomToast(message);
   if (message) pulse(message);
   renderLobby();
-  if (message && hub.session.isRoomPlay && els.lobbyDialog && !els.lobbyDialog.open) {
-    els.lobbyDialog.showModal();
-  }
 }
 
 function clearRoomNotice() {
@@ -1308,7 +1302,6 @@ function queueLeaveNotice(playerId, message) {
     showRoomToast(message);
     pulse(message);
     renderLobby();
-    if (hub.session.isRoomPlay && els.lobbyDialog && !els.lobbyDialog.open) els.lobbyDialog.showModal();
   }, 1200);
   hub.pendingLeaveNotices.set(playerId, timer);
 }
