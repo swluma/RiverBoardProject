@@ -99,6 +99,8 @@ const SHOWDOWN_FAST_INTERVAL = 250;
 const SHOWDOWN_CARD_FLIP_TIME = 540;
 const SHOWDOWN_POINT_TIME = 500;
 const SHOWDOWN_RANK_TIME = 650;
+const MEMBER_SLOT_COUNT = 4;
+const MEMBER_SLOT_ORDER = ['cpu', 'human', 'none'];
 const HUB_GAME_ID = 'role_board_poker';
 const HUB_ROOM_EVENTS = Object.freeze({
   JOIN_ROOM: 'join_room',
@@ -193,7 +195,7 @@ const els = {
   gameScreen: document.getElementById('gameScreen'),
   playerName: document.getElementById('playerName'),
   iconPicker: document.getElementById('iconPicker'),
-  cpuCount: document.getElementById('cpuCount'),
+  memberSlots: document.getElementById('memberSlots'),
   chipModeTab: document.getElementById('chipModeTab'),
   pointModeTab: document.getElementById('pointModeTab'),
   chipModePanel: document.getElementById('chipModePanel'),
@@ -265,6 +267,7 @@ const els = {
 let state = null;
 let selectedMode = 'chips';
 let localPlayerId = 0;
+let setupMemberKinds = ['human', 'cpu', 'cpu', 'none'];
 let selectedIcon = '🦉';
 let selectedHandIndex = null;
 let selectedMarketIndex = null;
@@ -404,6 +407,87 @@ function makePlayer(id, name, icon, isCpu, chips, color) {
   };
 }
 
+function makeMemberSlot(kind, index, hubPlayer = null) {
+  const isHostSlot = index === 0;
+  const meta = hubPlayer ? hub.playerMeta.get(hubPlayer.id) || {} : {};
+  const normalizedKind = isHostSlot ? 'human' : (kind === 'human' || kind === 'none' ? kind : 'cpu');
+  const isCpu = normalizedKind === 'cpu';
+  const isHuman = normalizedKind === 'human';
+  return {
+    index,
+    kind: normalizedKind,
+    ready: isCpu || isHostSlot || !!hubPlayer?.ready,
+    name: hubPlayer
+      ? sanitizeHubPlayerName(hubPlayer.name) || `Player ${index + 1}`
+      : isCpu
+        ? CPU_NAMES[Math.max(0, index - 1)] || `CPU ${index}`
+        : isHostSlot
+          ? (els.playerName.value || 'You').trim().slice(0, 14) || 'You'
+          : isHuman
+            ? `Human ${index + 1}`
+            : 'Empty',
+    icon: hubPlayer
+      ? meta.icon || (isHostSlot ? selectedIcon : (CPU_ICONS[Math.max(0, index - 1)] || '?'))
+      : isCpu
+        ? CPU_ICONS[Math.max(0, index - 1)] || 'CPU'
+        : isHuman
+          ? selectedIcon
+          : '+',
+    hubPlayerId: hubPlayer?.id || null,
+    isHostSlot,
+    isCpu,
+    isHuman,
+  };
+}
+
+function currentMemberSlots() {
+  const slots = Array.from({ length: MEMBER_SLOT_COUNT }, (_, index) => makeMemberSlot(setupMemberKinds[index] || 'none', index));
+  if (!hub.session.isRoomPlay || !hub.room?.players?.length) return slots;
+  orderedHubPlayers().forEach((roomPlayer, index) => {
+    if (index >= MEMBER_SLOT_COUNT) return;
+    const meta = hub.playerMeta.get(roomPlayer.id) || {};
+    slots[index] = makeMemberSlot(meta.slotKind || 'human', index, roomPlayer);
+  });
+  return slots;
+}
+
+function renderMemberSlots() {
+  if (!els.memberSlots) return;
+  els.memberSlots.innerHTML = currentMemberSlots().map(slot => `
+    <button class="member-slot member-${slot.kind}" type="button" data-member-index="${slot.index}" ${canEditMemberSlot(slot) ? '' : 'disabled'}>
+      <span class="member-icon">${escapeHtml(slot.icon)}</span>
+      <span class="member-name">${escapeHtml(slot.name)}</span>
+      <span class="member-ready ${slot.ready ? 'ready' : ''}">${slot.kind === 'none' ? 'None' : slot.ready ? 'Ready' : 'Not ready'}</span>
+    </button>
+  `).join('');
+}
+
+function canEditMemberSlot(slot) {
+  if (!slot || slot.isHostSlot) return false;
+  if (!hub.session.isRoomPlay) return true;
+  if (slot.hubPlayerId === hub.session.playerId) return true;
+  return hub.session.isHost && !slot.hubPlayerId;
+}
+
+function cycleMemberSlot(index) {
+  const slot = currentMemberSlots()[index];
+  if (!canEditMemberSlot(slot)) return;
+  if (hub.session.isRoomPlay && slot.hubPlayerId === hub.session.playerId) {
+    const current = hub.playerMeta.get(hub.session.playerId)?.slotKind || 'human';
+    const slotKind = current === 'none' ? 'human' : 'none';
+    applyPlayerMetaAction(hub.session.playerId, { icon: selectedIcon, slotKind });
+    sendHubAction(HUB_ACTION_TYPES.PLAYER_META, { icon: selectedIcon, slotKind });
+    renderMemberSlots();
+    renderLobby();
+    return;
+  }
+  const current = setupMemberKinds[index] || 'none';
+  const next = MEMBER_SLOT_ORDER[(MEMBER_SLOT_ORDER.indexOf(current) + 1) % MEMBER_SLOT_ORDER.length] || 'cpu';
+  setupMemberKinds[index] = next;
+  renderMemberSlots();
+  publishSetupSync();
+}
+
 function createInitialState(cpuCount, startingChips, baseBet) {
   const humanName = (els.playerName.value || 'You').trim().slice(0, 14) || 'You';
   const players = [makePlayer(0, humanName, selectedIcon, false, startingChips, PLAYER_COLORS[0])];
@@ -433,6 +517,17 @@ function createInitialState(cpuCount, startingChips, baseBet) {
       players.push(player);
     });
     localPlayerId = hubSeatForPlayerId(hub.session.playerId);
+  }
+  players.length = 0;
+  currentMemberSlots()
+    .filter(slot => slot.kind !== 'none')
+    .forEach((slot, id) => {
+      const player = makePlayer(id, slot.name, slot.icon, slot.kind === 'cpu', startingChips, PLAYER_COLORS[id] || '#d6e2f5');
+      player.hubPlayerId = slot.hubPlayerId;
+      players.push(player);
+    });
+  if (hub.session.isRoomPlay) {
+    localPlayerId = players.findIndex(player => player.hubPlayerId === hub.session.playerId);
   }
   return {
     players,
@@ -482,10 +577,15 @@ function hubSeatForPlayerId(playerId) {
 
 function localPlayer() {
   if (!state) return null;
+  if (!hub.session.isRoomPlay) {
+    const current = state.players[state.currentPlayerIndex];
+    if (current && !current.isCpu) return current;
+  }
   return state.players.find(player => player.id === localPlayerId) || state.players[0] || null;
 }
 
 function isLocalPlayer(player) {
+  if (!hub.session.isRoomPlay) return !!player && !player.isCpu;
   return !!player && player.id === localPlayerId;
 }
 
@@ -914,13 +1014,14 @@ function prepareRoomSetup() {
   els.gameScreen?.classList.remove('final-view');
   els.roomButton?.classList.remove('hidden');
   els.playerName.disabled = true;
-  els.cpuCount.disabled = true;
   setSetupControlsLocked(!hub.session.isHost);
+  renderMemberSlots();
   renderLobby();
 }
 
 function renderLobby() {
   if (!hub.session.isRoomPlay || !els.lobbyDialog) return;
+  renderMemberSlots();
   const room = hub.room;
   const players = orderedHubPlayers(room).map(player => ({
     ...player,
@@ -1014,6 +1115,7 @@ function currentSetupPayload() {
     handCardCount: Number(els.handCardCount.value),
     pointsToWin: Number(els.pointsToWin.value),
     foldWinPoints: Number(els.foldWinPoints.value),
+    memberKinds: setupMemberKinds.slice(),
   };
 }
 
@@ -1027,6 +1129,12 @@ function applySetupPayload(payload = {}) {
   setSetupValue(els.handCardCount, els.handCardCountSlider, payload.handCardCount);
   setSetupValue(els.pointsToWin, els.pointsToWinSlider, payload.pointsToWin);
   setSetupValue(els.foldWinPoints, els.foldWinPointsSlider, payload.foldWinPoints);
+  if (Array.isArray(payload.memberKinds)) {
+    setupMemberKinds = Array.from({ length: MEMBER_SLOT_COUNT }, (_, index) => (
+      index === 0 ? 'human' : ['human', 'cpu', 'none'].includes(payload.memberKinds[index]) ? payload.memberKinds[index] : 'none'
+    ));
+    renderMemberSlots();
+  }
   hub.setup = currentSetupPayload();
   hub.applyingRemote = false;
 }
@@ -1045,7 +1153,7 @@ function publishSetupSync() {
 
 function sendPlayerMeta() {
   if (!hub.session.isRoomPlay || !hub.connected) return;
-  const payload = { icon: selectedIcon };
+  const payload = { icon: selectedIcon, slotKind: hub.playerMeta.get(hub.session.playerId)?.slotKind || 'human' };
   applyPlayerMetaAction(hub.session.playerId, payload);
   sendHubAction(HUB_ACTION_TYPES.PLAYER_META, payload);
 }
@@ -1054,7 +1162,9 @@ function applyPlayerMetaAction(playerId, payload = {}) {
   if (!playerId) return;
   const existing = hub.playerMeta.get(playerId) || {};
   const icon = String(payload.icon || existing.icon || '').slice(0, 8);
-  hub.playerMeta.set(playerId, { ...existing, icon });
+  const slotKind = ['human', 'none'].includes(payload.slotKind) ? payload.slotKind : existing.slotKind || 'human';
+  hub.playerMeta.set(playerId, { ...existing, icon, slotKind });
+  renderMemberSlots();
   const player = state?.players?.find(entry => entry.hubPlayerId === playerId);
   if (player && icon) {
     player.icon = icon;
@@ -1117,7 +1227,7 @@ function startTable() {
   syncSetupAmount(els.handCardCount, els.handCardCountSlider);
   syncSetupAmount(els.pointsToWin, els.pointsToWinSlider);
   syncSetupAmount(els.foldWinPoints, els.foldWinPointsSlider);
-  state = createInitialState(Number(els.cpuCount.value), Number(els.startingChips.value), Number(els.baseBet.value));
+  state = createInitialState(0, Number(els.startingChips.value), Number(els.baseBet.value));
   document.body.classList.remove('room-setup-visible');
   els.setupScreen.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
@@ -4119,6 +4229,12 @@ els.copyLobbyCode?.addEventListener('click', copyLobbyCode);
 els.lobbyStartButton?.addEventListener('click', requestRoomStart);
 els.lobbyReadyButton?.addEventListener('click', toggleReady);
 els.tutorialButton.addEventListener('click', startTutorial);
+els.playerName.addEventListener('input', renderMemberSlots);
+els.memberSlots?.addEventListener('click', event => {
+  const button = event.target.closest('[data-member-index]');
+  if (!button) return;
+  cycleMemberSlot(Number(button.dataset.memberIndex));
+});
 els.chipModeTab.addEventListener('click', () => setSetupMode('chips'));
 els.pointModeTab.addEventListener('click', () => setSetupMode('points'));
 bindSetupAmount(els.startingChips, els.startingChipsSlider);
@@ -4190,12 +4306,14 @@ els.iconPicker.addEventListener('click', e => {
   if (!button) return;
   selectedIcon = button.dataset.icon;
   document.querySelectorAll('.icon-choice').forEach(b => b.classList.toggle('selected', b === button));
+  renderMemberSlots();
   sendPlayerMeta();
   renderLobby();
 });
 window.addEventListener('beforeunload', () => clearCpuTimers(true));
 
 populateRules();
+renderMemberSlots();
 connectHubRoom();
 
 async function toggleFullscreen() {

@@ -30,7 +30,10 @@
         </div>
         <div class="setup-grid">
           <label class="name-field">Name<input id="playerName" maxlength="14" value="You" /></label>
-          <label class="cpu-field">CPU<select id="cpuCount"><option value="1">1 CPU</option><option value="2" selected>2 CPUs</option><option value="3">3 CPUs</option></select></label>
+          <div class="member-field setup-common">
+            <span class="member-field-label">Members</span>
+            <div id="memberSlots" class="member-slots" aria-label="Game members"></div>
+          </div>
           <label class="setup-adjuster setup-common">Max Games
             <span class="setup-range-row">
               <input id="maxGamesSlider" type="range" min="0" max="30" step="1" value="0" />
