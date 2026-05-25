@@ -426,7 +426,9 @@ function makeMemberSlot(kind, index, hubPlayer = null) {
     kind: normalizedKind,
     ready: isCpu || (hub.session.isRoomPlay ? isHostSlot || !!hubPlayer?.ready : !isHuman || localSetupReady),
     name: hubPlayer
-      ? sanitizeHubPlayerName(hubPlayer.name) || `Player ${index + 1}`
+      ? isCpu
+        ? CPU_NAMES[Math.max(0, index - 1)] || `CPU ${index}`
+        : sanitizeHubPlayerName(hubPlayer.name) || `Player ${index + 1}`
       : isCpu
         ? CPU_NAMES[Math.max(0, index - 1)] || `CPU ${index}`
         : isHostSlot
@@ -435,7 +437,9 @@ function makeMemberSlot(kind, index, hubPlayer = null) {
             ? `Human ${index + 1}`
             : 'Empty',
     icon: hubPlayer
-      ? meta.icon || (isHostSlot ? selectedIcon : (CPU_ICONS[Math.max(0, index - 1)] || '?'))
+      ? isCpu
+        ? CPU_ICONS[Math.max(0, index - 1)] || 'CPU'
+        : meta.icon || (isHostSlot ? selectedIcon : (CPU_ICONS[Math.max(0, index - 1)] || '?'))
       : isCpu
         ? CPU_ICONS[Math.max(0, index - 1)] || 'CPU'
         : isHuman
@@ -516,7 +520,8 @@ function cycleMemberSlot(index) {
   if (!canEditMemberSlot(slot)) return;
   if (hub.session.isRoomPlay && slot.hubPlayerId === hub.session.playerId) {
     const current = hub.playerMeta.get(hub.session.playerId)?.slotKind || 'human';
-    const slotKind = current === 'none' ? 'human' : 'none';
+    const order = ['human', 'cpu', 'none'];
+    const slotKind = order[(order.indexOf(current) + 1) % order.length] || 'human';
     applyPlayerMetaAction(hub.session.playerId, { icon: selectedIcon, slotKind });
     sendHubAction(HUB_ACTION_TYPES.PLAYER_META, { icon: selectedIcon, slotKind });
     renderMemberSlots();
@@ -573,7 +578,7 @@ function createInitialState(cpuCount, startingChips, baseBet) {
     .filter(slot => slot.kind !== 'none')
     .forEach((slot, id) => {
       const player = makePlayer(id, slot.name, slot.icon, slot.kind === 'cpu', startingChips, PLAYER_COLORS[id] || '#d6e2f5');
-      player.hubPlayerId = slot.hubPlayerId;
+      player.hubPlayerId = slot.kind === 'human' ? slot.hubPlayerId : null;
       players.push(player);
     });
   if (hub.session.isRoomPlay) {
@@ -646,7 +651,11 @@ function remoteSeatPosition(player) {
 }
 
 function isRoomHost() {
-  return hub.session.isRoomPlay && hub.session.isHost;
+  return hub.session.isRoomPlay && hub.session.isHost && !tutorial?.active && !state?.tutorial;
+}
+
+function shouldUseHubActions() {
+  return hub.session.isRoomPlay && !tutorial?.active && !state?.tutorial;
 }
 
 function hubSend(type, payload = {}) {
@@ -669,7 +678,7 @@ function makeHubAction(type, payload = {}) {
 }
 
 function sendHubAction(type, payload = {}) {
-  if (!hub.session.isRoomPlay || !hub.connected) return false;
+  if (!shouldUseHubActions() || !hub.connected) return false;
   return hubSend(HUB_ROOM_EVENTS.GAME_ACTION, {
     roomCode: hub.session.roomCode,
     action: makeHubAction(type, payload),
@@ -712,7 +721,7 @@ function isRenderableGameState(candidate) {
 }
 
 function publishSnapshot(reason = 'snapshot') {
-  if (!isRoomHost() || !hub.connected || !state || hub.applyingRemote) return;
+  if (!isRoomHost() || !hub.connected || !state || state.tutorial || hub.applyingRemote) return;
   bumpVersion();
   const animation = currentAnimationSync();
   sendHubAction(HUB_ACTION_TYPES.SNAPSHOT, {
@@ -841,6 +850,11 @@ function clearStateAnimationSync() {
   state.animationSync = emptyAnimationSync();
 }
 
+function playerForHubAction(action) {
+  if (!action?.playerId || !state?.players) return null;
+  return state.players.find(player => player.hubPlayerId === action.playerId) || null;
+}
+
 function validateSeatAction(action, player) {
   if (!action || !player) return false;
   return !!player.hubPlayerId && player.hubPlayerId === action.playerId;
@@ -849,7 +863,7 @@ function validateSeatAction(action, player) {
 function applyAuthoritativeAction(action) {
   if (!isRoomHost() || !state || hub.processedActions.has(action?.id)) return;
   hub.processedActions.add(action.id);
-  const player = state.players[hubSeatForPlayerId(action.playerId)];
+  const player = playerForHubAction(action);
   if (!validateSeatAction(action, player)) return;
   let changed = false;
   if (action.type === HUB_ACTION_TYPES.CLAIM) {
@@ -1256,7 +1270,7 @@ function applyPlayerMetaAction(playerId, payload = {}) {
   if (!playerId) return;
   const existing = hub.playerMeta.get(playerId) || {};
   const icon = String(payload.icon || existing.icon || '').slice(0, 8);
-  const slotKind = ['human', 'none'].includes(payload.slotKind) ? payload.slotKind : existing.slotKind || 'human';
+  const slotKind = ['human', 'cpu', 'none'].includes(payload.slotKind) ? payload.slotKind : existing.slotKind || 'human';
   hub.playerMeta.set(playerId, { ...existing, icon, slotKind });
   renderMemberSlots();
   const player = state?.players?.find(entry => entry.hubPlayerId === playerId);
@@ -2153,7 +2167,7 @@ function clearQueuedCardAnimations() {
 }
 
 function maybeCpuTurn() {
-  if (hub.session.isRoomPlay) return;
+  if (hub.session.isRoomPlay && !isRoomHost()) return;
   if (tutorial?.active) return;
   clearCpuTimers(false);
   if (!state || state.phase !== 'round') return;
@@ -2170,6 +2184,7 @@ function runCpuTurn(player) {
     if (special) useSpecial(player, special.type, special.payload);
   }
   normalAction(player, chooseCpuNormal(player));
+  if (isRoomHost()) publishSnapshot('cpu_turn');
 }
 
 function cpuPersonality(player) {
@@ -2793,6 +2808,10 @@ function showTutorialStep(index) {
   tutorial.focus = config.focus;
   tutorial.allow = config.allow;
   tutorial.stepWaitsForAction = !!config.wait;
+  if (index === 11 || index === 29) {
+    renderClaimBoardOptions();
+    if (!els.claimBoardDialog.open) els.claimBoardDialog.show();
+  }
   updateTutorialNextButton();
   refreshTutorialFocus();
 }
@@ -4019,7 +4038,7 @@ function publicCardDieNode() {
 }
 
 function revealProofTargets(user) {
-  if (hub.session.isRoomPlay && !hub.session.isHost) {
+  if (shouldUseHubActions() && !hub.session.isHost) {
     return state.players.filter(player => player.id !== user?.id && !player.out && !player.folded && player.hand.length);
   }
   return state.players.filter(player => revealProofCards(player, user).length);
@@ -4302,7 +4321,7 @@ function confirmHumanSpecial() {
     payload.handIndex = selectedHandIndex;
     payload.marketIndex = selectedMarketIndex;
   }
-  if (hub.session.isRoomPlay) {
+  if (shouldUseHubActions()) {
     sendHubAction(HUB_ACTION_TYPES.SPECIAL, { type: specialMode, payload });
     return;
   }
@@ -4320,7 +4339,7 @@ function confirmHumanSpecial() {
 function submitClaimAction(claim) {
   const human = localPlayer();
   if (!human || !isHumanTurnBeforeNormal() || state.round > 2) return;
-  if (hub.session.isRoomPlay) {
+  if (shouldUseHubActions()) {
     sendHubAction(HUB_ACTION_TYPES.CLAIM, { claim });
     els.claimBoardDialog.close();
     return;
@@ -4334,7 +4353,7 @@ function submitClaimAction(claim) {
 function submitNormalAction(action) {
   const human = localPlayer();
   if (!human) return;
-  if (hub.session.isRoomPlay) {
+  if (shouldUseHubActions()) {
     sendHubAction(HUB_ACTION_TYPES.NORMAL, { action });
     return;
   }
@@ -4344,7 +4363,7 @@ function submitNormalAction(action) {
 function submitLastFoldAction(choice) {
   const human = localPlayer();
   if (!human) return;
-  if (hub.session.isRoomPlay) {
+  if (shouldUseHubActions()) {
     sendHubAction(HUB_ACTION_TYPES.LAST_FOLD, { choice });
     return;
   }
@@ -4417,7 +4436,7 @@ els.claimBoardOptions.addEventListener('click', event => {
 els.cancelQuitButton.addEventListener('click', () => els.quitDialog.close());
 els.confirmQuitButton.addEventListener('click', () => {
   els.quitDialog.close();
-  if (hub.session.isRoomPlay) {
+  if (shouldUseHubActions()) {
     if (canUseResultButtons()) {
       endGame('Game ended by the host.');
       publishSnapshot('quit');
