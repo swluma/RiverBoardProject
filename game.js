@@ -907,6 +907,9 @@ function applyAuthoritativeAction(action) {
     changed = applyNormalAction(player, action.payload?.action);
   } else if (action.type === HUB_ACTION_TYPES.LAST_FOLD) {
     changed = applyLastFoldAction(player, action.payload?.choice);
+  } else if (action.type === HUB_ACTION_TYPES.NEXT_GAME && action.payload?.target === 'setup') {
+    resetRoomGameToSetup();
+    return;
   } else if (action.type === HUB_ACTION_TYPES.NEXT_GAME && state.phase === 'result') {
     startNewGame();
     publishSnapshot('next_game');
@@ -3894,7 +3897,7 @@ function requestPlayAgain() {
   if (shouldUseHubActions()) {
     if (!canUseResultButtons()) return;
     if (hub.session.isHost) resetRoomGameToSetup();
-    else sendHubAction(HUB_ACTION_TYPES.NEXT_GAME);
+    else sendHubAction(HUB_ACTION_TYPES.NEXT_GAME, { target: 'setup' });
     return;
   }
   returnToSetupWithCurrentSettings();
