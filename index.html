@@ -7,12 +7,13 @@
   <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
   <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
   <title>Role Board Poker</title>
-  <link rel="stylesheet" href="style.css?v=room-lifecycle-1" />
+  <link rel="stylesheet" href="style.css?v=room-notice-1" />
 </head>
 <body>
   <div id="app">
     <button id="fullscreenButton" class="fullscreen-button" type="button" title="Toggle full screen" aria-label="Toggle full screen">🖥️</button>
     <div id="topGameCount" class="top-game-count hidden" aria-live="polite">0/∞ games</div>
+    <div id="roomToast" class="room-toast hidden" aria-live="polite"></div>
     <button id="rulesButton" class="rules-button" type="button">Hands</button>
 
     <section id="setupScreen" class="setup-screen">
@@ -208,6 +209,6 @@
       <div id="claimBoardOptions" class="claim-board-options"></div>
     </dialog>
   </div>
-  <script src="game.js?v=room-lifecycle-1"></script>
+  <script src="game.js?v=room-notice-1"></script>
 </body>
 </html>

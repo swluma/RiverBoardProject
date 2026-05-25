@@ -245,6 +245,7 @@ const els = {
   resultPanel: document.getElementById('resultPanel'),
   finalResultScreen: document.getElementById('finalResultScreen'),
   topGameCount: document.getElementById('topGameCount'),
+  roomToast: document.getElementById('roomToast'),
   fullscreenButton: document.getElementById('fullscreenButton'),
   rulesButton: document.getElementById('rulesButton'),
   closeRules: document.getElementById('closeRules'),
@@ -371,6 +372,8 @@ const hub = {
   applyingRemote: false,
   lastError: '',
   notice: '',
+  noticeTimer: null,
+  pendingLeaveNotices: new Map(),
   playerMeta: new Map(),
   setup: null,
   pendingResultSnapshot: null,
@@ -1094,11 +1097,15 @@ function handleHubMessage(type, payload) {
     const previousHostId = hub.room?.hostId || orderedHubPlayers()[0]?.id || null;
     const previousPlayers = orderedHubPlayers();
     hub.room = payload.room || hub.room;
+    if (type === HUB_SERVER_EVENTS.PLAYER_JOINED) {
+      const joinedId = payload.playerId || payload.player?.id || payload.id;
+      cancelPendingLeaveNotice(joinedId);
+    }
     if (type === HUB_SERVER_EVENTS.PLAYER_LEFT) {
       const leftId = payload.playerId || payload.player?.id || payload.id;
       const leftPlayer = previousPlayers.find(player => player.id === leftId);
       if (leftId && leftId !== hub.session.playerId) {
-        setRoomNotice(`${sanitizeHubPlayerName(leftPlayer?.name) || (leftId === previousHostId ? 'Host' : 'Guest')} has left the room.`);
+        queueLeaveNotice(leftId, `${sanitizeHubPlayerName(leftPlayer?.name) || (leftId === previousHostId ? 'Host' : 'Guest')} has left the room.`);
       }
       if (leftId && leftId === previousHostId && leftId !== hub.session.playerId) {
         hub.lastError = 'Host left the room.';
@@ -1179,7 +1186,12 @@ function renderLobby() {
   if (!hub.session.isRoomPlay || !els.lobbyDialog) return;
   renderMemberSlots();
   const room = hub.room;
-  const players = orderedHubPlayers(room).map(player => ({
+  const roomPlayers = orderedHubPlayers(room);
+  const hostId = room?.hostId || roomPlayers[0]?.id || null;
+  const hostPresent = !!roomPlayers.some(player => player.id === hostId) && !/host left/i.test(hub.lastError || hub.notice || '');
+  const players = roomPlayers
+    .filter(player => player.id !== hostId || hostPresent)
+    .map(player => ({
     ...player,
     ready: player.id === room?.hostId || !!player.ready,
   }));
@@ -1194,7 +1206,7 @@ function renderLobby() {
     ? players.map((player, index) => `
       <article class="lobby-player-card">
         <span class="lobby-player-icon">${escapeHtml(playerIconForHubPlayer(player, index))}</span>
-        <span class="lobby-player-name">${escapeHtml(player.name || `Player ${index + 1}`)} <span>${index === 0 ? 'Host' : 'Guest'}</span></span>
+        <span class="lobby-player-name">${escapeHtml(player.name || `Player ${index + 1}`)} <span>${player.id === hostId ? 'Host' : 'Guest'}</span></span>
         <span class="lobby-player-ready ${player.ready ? 'ready' : ''}">${player.ready ? 'Ready' : 'Not ready'}</span>
       </article>
     `).join('')
@@ -1252,11 +1264,44 @@ function closeLobbyDialog(event = null) {
 
 function setRoomNotice(message) {
   hub.notice = message || '';
+  showRoomToast(message);
   if (message) pulse(message);
   renderLobby();
   if (message && hub.session.isRoomPlay && els.lobbyDialog && !els.lobbyDialog.open) {
     els.lobbyDialog.showModal();
   }
+}
+
+function showRoomToast(message) {
+  if (!message || !els.roomToast) return;
+  clearTimeout(hub.noticeTimer);
+  els.roomToast.textContent = message;
+  els.roomToast.classList.remove('hidden');
+  els.roomToast.classList.remove('show');
+  void els.roomToast.offsetWidth;
+  els.roomToast.classList.add('show');
+  hub.noticeTimer = window.setTimeout(() => {
+    els.roomToast.classList.remove('show');
+    els.roomToast.classList.add('hidden');
+  }, 4200);
+}
+
+function queueLeaveNotice(playerId, message) {
+  if (!playerId || !message) return;
+  cancelPendingLeaveNotice(playerId);
+  const timer = window.setTimeout(() => {
+    hub.pendingLeaveNotices.delete(playerId);
+    setRoomNotice(message);
+  }, 1200);
+  hub.pendingLeaveNotices.set(playerId, timer);
+}
+
+function cancelPendingLeaveNotice(playerId) {
+  if (!playerId || !hub.pendingLeaveNotices.has(playerId)) return;
+  clearTimeout(hub.pendingLeaveNotices.get(playerId));
+  hub.pendingLeaveNotices.delete(playerId);
+  hub.notice = '';
+  renderLobby();
 }
 
 async function copyLobbyCode() {

@@ -285,6 +285,28 @@ body.room-setup-visible #gameScreen {
   padding: 14px 18px;
 }
 .setup-subtitle { margin: 0; color: var(--muted); }
+.room-toast {
+  position: fixed;
+  left: 50%;
+  top: 18px;
+  transform: translate(-50%, -14px);
+  z-index: 9500;
+  width: min(520px, calc(100vw - 24px));
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 215, 106, 0.36);
+  background: rgba(31, 35, 30, 0.94);
+  color: #fff0bd;
+  font-weight: 900;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.room-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
 .mode-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
