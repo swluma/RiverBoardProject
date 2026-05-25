@@ -289,7 +289,7 @@ body.room-setup-visible #gameScreen {
   position: fixed;
   left: 50%;
   top: 18px;
-  transform: translate(-50%, -14px);
+  transform: translate(-50%, -120%);
   z-index: 9500;
   width: min(520px, calc(100vw - 24px));
   padding: 12px 16px;
@@ -301,11 +301,27 @@ body.room-setup-visible #gameScreen {
   box-shadow: 0 18px 44px rgba(0,0,0,0.42);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 180ms ease, transform 180ms ease;
 }
 .room-toast.show {
-  opacity: 1;
-  transform: translate(-50%, 0);
+  animation: roomToastDrop 2s ease-in-out both;
+}
+@keyframes roomToastDrop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -120%);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  75% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -120%);
+  }
 }
 .mode-tabs {
   display: grid;

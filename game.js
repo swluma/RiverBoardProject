@@ -372,6 +372,7 @@ const hub = {
   applyingRemote: false,
   lastError: '',
   notice: '',
+  noticePlayerId: null,
   noticeTimer: null,
   pendingLeaveNotices: new Map(),
   playerMeta: new Map(),
@@ -1264,12 +1265,23 @@ function closeLobbyDialog(event = null) {
 
 function setRoomNotice(message) {
   hub.notice = message || '';
+  hub.noticePlayerId = null;
   showRoomToast(message);
   if (message) pulse(message);
   renderLobby();
   if (message && hub.session.isRoomPlay && els.lobbyDialog && !els.lobbyDialog.open) {
     els.lobbyDialog.showModal();
   }
+}
+
+function clearRoomNotice() {
+  hub.notice = '';
+  hub.noticePlayerId = null;
+  if (els.roomToast) {
+    els.roomToast.classList.remove('show');
+    els.roomToast.classList.add('hidden');
+  }
+  renderLobby();
 }
 
 function showRoomToast(message) {
@@ -1283,7 +1295,7 @@ function showRoomToast(message) {
   hub.noticeTimer = window.setTimeout(() => {
     els.roomToast.classList.remove('show');
     els.roomToast.classList.add('hidden');
-  }, 4200);
+  }, 2000);
 }
 
 function queueLeaveNotice(playerId, message) {
@@ -1291,17 +1303,23 @@ function queueLeaveNotice(playerId, message) {
   cancelPendingLeaveNotice(playerId);
   const timer = window.setTimeout(() => {
     hub.pendingLeaveNotices.delete(playerId);
-    setRoomNotice(message);
+    hub.notice = message;
+    hub.noticePlayerId = playerId;
+    showRoomToast(message);
+    pulse(message);
+    renderLobby();
+    if (hub.session.isRoomPlay && els.lobbyDialog && !els.lobbyDialog.open) els.lobbyDialog.showModal();
   }, 1200);
   hub.pendingLeaveNotices.set(playerId, timer);
 }
 
 function cancelPendingLeaveNotice(playerId) {
-  if (!playerId || !hub.pendingLeaveNotices.has(playerId)) return;
-  clearTimeout(hub.pendingLeaveNotices.get(playerId));
-  hub.pendingLeaveNotices.delete(playerId);
-  hub.notice = '';
-  renderLobby();
+  if (!playerId) return;
+  if (hub.pendingLeaveNotices.has(playerId)) {
+    clearTimeout(hub.pendingLeaveNotices.get(playerId));
+    hub.pendingLeaveNotices.delete(playerId);
+  }
+  if (hub.noticePlayerId === playerId) clearRoomNotice();
 }
 
 async function copyLobbyCode() {
