@@ -918,7 +918,7 @@ function applyAuthoritativeAction(action) {
     resetRoomGameToSetup();
     return;
   } else if (action.type === HUB_ACTION_TYPES.QUIT) {
-    endGame('Game ended by the host.');
+    endGame('Game ended by the player.');
     changed = true;
   } else if (action.type === HUB_ACTION_TYPES.PLAYER_META) {
     applyPlayerMetaAction(action.playerId, action.payload);
@@ -4609,9 +4609,12 @@ els.cancelQuitButton.addEventListener('click', () => els.quitDialog.close());
 els.confirmQuitButton.addEventListener('click', () => {
   els.quitDialog.close();
   if (shouldUseHubActions()) {
-    if (canUseResultButtons()) {
+    if (!canUseResultButtons()) return;
+    if (hub.session.isHost) {
       endGame('Game ended by the host.');
       publishSnapshot('quit');
+    } else {
+      sendHubAction(HUB_ACTION_TYPES.QUIT);
     }
     return;
   }
