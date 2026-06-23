@@ -1,6 +1,6 @@
 {
   "title": "Role Board Poker",
-  "description": "A poker-inspired role board card game with chips, points, CPU opponents, special actions, and a tutorial.",
+  "description": "A poker strategy game where players build hands, bluff with hidden Role Board claims, and use special actions to outscore rivals at showdown.",
   "icon": "./icon.png",
   "maxPlayers": 2,
   "supportsLocal": true,
