@@ -99,6 +99,7 @@ const SHOWDOWN_FAST_INTERVAL = 250;
 const SHOWDOWN_CARD_FLIP_TIME = 540;
 const SHOWDOWN_POINT_TIME = 500;
 const SHOWDOWN_RANK_TIME = 650;
+const LAST_FOLD_DURATION_MS = 7000;
 const MEMBER_SLOT_COUNT = 4;
 const MEMBER_SLOT_ORDER = ['cpu', 'none'];
 const HUB_GAME_ID = 'role_board_poker';
@@ -720,11 +721,6 @@ function cloneGameState() {
 function cloneGameStateForGuests() {
   const snapshot = cloneGameState();
   if (!snapshot) return null;
-  if (snapshot.phase === 'lastFold' && Number.isFinite(snapshot.lastFoldEndsAt)) {
-    snapshot.lastFoldRemainingMs = Math.max(0, snapshot.lastFoldEndsAt - Date.now());
-  } else {
-    snapshot.lastFoldRemainingMs = null;
-  }
   snapshot.proofTargetIdsByPlayerId = Object.fromEntries(snapshot.players.map(player => [
     player.id,
     snapshot.players.filter(target => revealProofCards(target, player).length).map(target => target.id),
@@ -784,9 +780,12 @@ function applySnapshot(snapshot) {
   clearTimeout(openingDealTimer);
   clearTimeout(roundTransitionTimer);
   clearInterval(lastFoldInterval);
+  const localLastFoldEndsAt = !hub.session.isHost && state?.phase === 'lastFold' && Number.isFinite(state.lastFoldEndsAt)
+    ? state.lastFoldEndsAt
+    : null;
   state = snapshot.state;
-  if (!hub.session.isHost && state.phase === 'lastFold' && Number.isFinite(state.lastFoldRemainingMs)) {
-    state.lastFoldEndsAt = Date.now() + state.lastFoldRemainingMs;
+  if (!hub.session.isHost && state.phase === 'lastFold') {
+    state.lastFoldEndsAt = localLastFoldEndsAt || Date.now() + LAST_FOLD_DURATION_MS;
   }
   applyAnimationSync(snapshot.animation);
   localPlayerId = state.players.findIndex(player => player.hubPlayerId === hub.session.playerId);
@@ -1750,7 +1749,7 @@ function awardEarlyWin() {
 function beginLastFold() {
   clearCpuTimers();
   state.phase = 'lastFold';
-  state.lastFoldEndsAt = Date.now() + 7000;
+  state.lastFoldEndsAt = Date.now() + LAST_FOLD_DURATION_MS;
   for (const p of state.players) p.lastFoldChoice = p.out ? 'out' : p.folded ? 'folded' : p.allIn ? 'continue' : null;
   updateLastFoldTimerText();
   render();
@@ -1800,7 +1799,7 @@ function allLastFoldChoicesMade() {
 }
 
 function updateLastFoldTimerText() {
-  const fallback = 7;
+  const fallback = Math.ceil(LAST_FOLD_DURATION_MS / 1000);
   const remaining = state?.lastFoldEndsAt
     ? Math.max(0, Math.ceil((state.lastFoldEndsAt - Date.now()) / 1000))
     : fallback;
