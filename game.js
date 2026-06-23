@@ -720,6 +720,11 @@ function cloneGameState() {
 function cloneGameStateForGuests() {
   const snapshot = cloneGameState();
   if (!snapshot) return null;
+  if (snapshot.phase === 'lastFold' && Number.isFinite(snapshot.lastFoldEndsAt)) {
+    snapshot.lastFoldRemainingMs = Math.max(0, snapshot.lastFoldEndsAt - Date.now());
+  } else {
+    snapshot.lastFoldRemainingMs = null;
+  }
   snapshot.proofTargetIdsByPlayerId = Object.fromEntries(snapshot.players.map(player => [
     player.id,
     snapshot.players.filter(target => revealProofCards(target, player).length).map(target => target.id),
@@ -780,6 +785,9 @@ function applySnapshot(snapshot) {
   clearTimeout(roundTransitionTimer);
   clearInterval(lastFoldInterval);
   state = snapshot.state;
+  if (!hub.session.isHost && state.phase === 'lastFold' && Number.isFinite(state.lastFoldRemainingMs)) {
+    state.lastFoldEndsAt = Date.now() + state.lastFoldRemainingMs;
+  }
   applyAnimationSync(snapshot.animation);
   localPlayerId = state.players.findIndex(player => player.hubPlayerId === hub.session.playerId);
   resetSelections();
