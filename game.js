@@ -307,17 +307,17 @@ let activePanelDrag = null;
 let activePlayPanelResize = null;
 let customPlayPanelHeight = null;
 
-function safeStorageGet(key) {
+function safeSessionStorageGet(key) {
   try {
-    return window.localStorage.getItem(key);
+    return window.sessionStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function safeStorageSet(key, value) {
+function safeSessionStorageSet(key, value) {
   try {
-    window.localStorage.setItem(key, value);
+    window.sessionStorage.setItem(key, value);
   } catch {}
 }
 
@@ -331,10 +331,10 @@ function sanitizeHubPlayerName(value) {
 
 function createStableHubPlayerId(mode, roomCode) {
   const key = `${HUB_GAME_ID}:player-id:${mode || 'local'}:${roomCode || 'local'}`;
-  const existing = safeStorageGet(key);
+  const existing = safeSessionStorageGet(key);
   if (existing) return existing;
   const generated = `${HUB_GAME_ID}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-  safeStorageSet(key, generated);
+  safeSessionStorageSet(key, generated);
   return generated;
 }
 
@@ -362,6 +362,7 @@ function resolveHubSession() {
 const hub = {
   session: resolveHubSession(),
   socket: null,
+  connectionToken: 0,
   connected: false,
   joined: false,
   room: null,
@@ -370,6 +371,10 @@ const hub = {
   actionCounter: 1,
   processedActions: new Set(),
   heartbeatTimer: null,
+  reconnectTimer: null,
+  reconnectAttempts: 0,
+  reconnecting: false,
+  intentionallyClosed: false,
   applyingRemote: false,
   lastError: '',
   notice: '',
@@ -1025,26 +1030,74 @@ function drawFromStock() {
   return state.stock.pop() || null;
 }
 
-function connectHubRoom() {
+function clearHubReconnectTimer() {
+  if (!hub.reconnectTimer) return;
+  clearTimeout(hub.reconnectTimer);
+  hub.reconnectTimer = null;
+}
+
+function resetHubSocket() {
+  clearInterval(hub.heartbeatTimer);
+  hub.heartbeatTimer = null;
+  if (!hub.socket) return;
+  hub.socket.onopen = null;
+  hub.socket.onmessage = null;
+  hub.socket.onclose = null;
+  hub.socket.onerror = null;
+  if (hub.socket.readyState === WebSocket.CONNECTING || hub.socket.readyState === WebSocket.OPEN) {
+    hub.intentionallyClosed = true;
+    hub.socket.close();
+  }
+  hub.socket = null;
+}
+
+function scheduleHubReconnect() {
+  if (!hub.session.isRoomPlay || hub.intentionallyClosed || hub.reconnectTimer) return false;
+  if (hub.reconnectAttempts >= 5) return false;
+  hub.reconnecting = true;
+  hub.reconnectAttempts += 1;
+  const delay = Math.min(8000, 600 * hub.reconnectAttempts);
+  hub.lastError = '';
+  setRoomNotice('Reconnecting to the room...');
+  renderLobby();
+  hub.reconnectTimer = window.setTimeout(() => {
+    hub.reconnectTimer = null;
+    connectHubRoom({ reconnect: true });
+  }, delay);
+  return true;
+}
+
+function connectHubRoom(options = {}) {
   if (!hub.session.isRoomPlay) return;
   els.playerName.value = hub.session.playerName;
   localPlayerId = hub.session.isHost ? 0 : 1;
-  prepareRoomSetup();
-  openLobbyDialog();
+  if (!options.reconnect) {
+    prepareRoomSetup();
+    openLobbyDialog();
+  }
   if (!hub.session.valid) {
     hub.lastError = 'Missing room or WebSocket URL.';
     renderLobby();
     return;
   }
+  resetHubSocket();
+  hub.intentionallyClosed = false;
   try {
+    hub.connectionToken += 1;
     hub.socket = new WebSocket(hub.session.wsUrl);
   } catch {
     hub.lastError = 'Could not open the room connection.';
     renderLobby();
     return;
   }
+  const connectionToken = hub.connectionToken;
   hub.socket.addEventListener('open', () => {
+    if (connectionToken !== hub.connectionToken) return;
     hub.connected = true;
+    hub.reconnecting = false;
+    hub.reconnectAttempts = 0;
+    hub.lastError = '';
+    clearHubReconnectTimer();
     hubSend(HUB_ROOM_EVENTS.JOIN_ROOM, {
       roomCode: hub.session.roomCode,
       playerName: hub.session.playerName,
@@ -1056,6 +1109,7 @@ function connectHubRoom() {
     renderLobby();
   });
   hub.socket.addEventListener('message', event => {
+    if (connectionToken !== hub.connectionToken) return;
     let message = null;
     try {
       message = JSON.parse(event.data);
@@ -1065,8 +1119,12 @@ function connectHubRoom() {
     handleHubMessage(message.type, message.payload || {});
   });
   hub.socket.addEventListener('close', () => {
+    if (connectionToken !== hub.connectionToken) return;
     hub.connected = false;
     clearInterval(hub.heartbeatTimer);
+    hub.heartbeatTimer = null;
+    hub.socket = null;
+    if (scheduleHubReconnect()) return;
     if (!hub.session.isHost) {
       hub.lastError = hub.lastError || 'Disconnected from the host room.';
       setRoomNotice(hub.notice || 'Host has left the room.');
@@ -1075,6 +1133,7 @@ function connectHubRoom() {
     }
   });
   hub.socket.addEventListener('error', () => {
+    if (connectionToken !== hub.connectionToken) return;
     hub.lastError = 'WebSocket connection failed.';
     renderLobby();
   });
@@ -1168,6 +1227,8 @@ function handleHubMessage(type, payload) {
   }
   if (type === HUB_SERVER_EVENTS.ROOM_CLOSED) {
     hub.lastError = payload.message || 'Room closed.';
+    hub.intentionallyClosed = true;
+    clearHubReconnectTimer();
     setRoomNotice(hub.lastError);
     hub.connected = false;
     hub.started = false;
