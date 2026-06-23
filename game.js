@@ -723,7 +723,7 @@ function cloneGameStateForGuests() {
   if (!snapshot) return null;
   snapshot.proofTargetIdsByPlayerId = Object.fromEntries(snapshot.players.map(player => [
     player.id,
-    snapshot.players.filter(target => revealProofCards(target, player).length).map(target => target.id),
+    snapshot.players.filter(target => revealProofCards(target, player, snapshot).length).map(target => target.id),
   ]));
   snapshot.stock = snapshot.stock.map((_, index) => ({ id: `stock-${index}`, hidden: true }));
   snapshot.reservedMarket = snapshot.reservedMarket.map((_, index) => ({ id: `reserved-${index}`, hidden: true }));
@@ -3737,10 +3737,11 @@ function bestAvailableHandDisplay(player) {
   });
 }
 
-function revealProofCards(target, user = null) {
+function revealProofCards(target, user = null, gameState = state) {
   if (!target || target.id === user?.id || target.out || target.folded || !target.hand.length) return [];
   const handCards = new Set(target.hand.map(card => card.id));
-  const chosenCards = bestCombinationCards([...target.hand, ...state.market], evaluatePlayerHand(target));
+  const market = gameState?.market || [];
+  const chosenCards = bestCombinationCards([...target.hand, ...market], evaluatePlayerHand(target, target.hand, market));
   return chosenCards.filter(card => handCards.has(card.id) && !isPublicHandCard(target, card));
 }
 
@@ -4219,7 +4220,7 @@ function revealProofTargets(user) {
     if (Array.isArray(targetIds)) {
       return state.players.filter(player => targetIds.includes(player.id) && !player.out && !player.folded && player.hand.length);
     }
-    return state.players.filter(player => player.id !== user?.id && !player.out && !player.folded && player.hand.length);
+    return state.players.filter(player => revealProofCards(player, user).length);
   }
   return state.players.filter(player => revealProofCards(player, user).length);
 }
