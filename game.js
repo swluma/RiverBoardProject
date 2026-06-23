@@ -82,7 +82,7 @@ const SPECIAL_NAMES = {
 const SPECIAL_DESCRIPTIONS = {
   exchange: 'Replace one chosen hand card with the top stock card.',
   random: 'Redraw up to 3 random eligible hand cards. Your first use each game also adds one public die card; later uses add none. Die cards cannot be redrawn.',
-  peek: 'Reveal one non-public scoring card from an opponent to everyone.',
+  peek: 'Reveal one non-public scoring card from an opponent\'s current best hand. Players without unrevealed scoring cards cannot be selected.',
   market: 'Trade one hand card with one unlocked table card. The table card stays common and locks after the swap.',
 };
 const NORMAL_ACTION_DESCRIPTIONS = [
